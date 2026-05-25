@@ -1,0 +1,41 @@
+name: SwiftMoonlightApps
+options:
+  minimumXcodeGenVersion: 2.45.0
+  deploymentTarget:
+    macOS: "14.0"
+
+configs:
+  Debug: debug
+  Release: release
+
+packages:
+  SwiftMoonlightPackage:
+    path: .
+
+settings:
+  base:
+    SWIFT_VERSION: 6.0
+
+targets:
+  SwiftMoonlightTestApp:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/SwiftMoonlightTestApp
+      - path: AppResources/SwiftMoonlightTestApp/Assets.xcassets
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_NAME: Swift Moonlight Test App
+        PRODUCT_BUNDLE_IDENTIFIER: dev.vivy.swift-moonlight.test-app
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: AppResources/SwiftMoonlightTestApp/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 0.1.0
+        MACOSX_DEPLOYMENT_TARGET: 14.0
+    dependencies:
+      - package: SwiftMoonlightPackage
+        product: SwiftMoonlight
+      - package: SwiftMoonlightPackage
+        product: SwiftMoonlightTestAppSupport

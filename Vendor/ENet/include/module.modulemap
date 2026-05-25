@@ -1,0 +1,4 @@
+module CENet [system] {
+    header "enet/enet.h"
+    export *
+}

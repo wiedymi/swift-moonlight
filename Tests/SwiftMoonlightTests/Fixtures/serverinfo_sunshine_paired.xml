@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root status_code="200">
+  <hostname>Test Sunshine Host</hostname>
+  <paired>1</paired>
+  <appversion>Sunshine-2026.319.232111</appversion>
+  <GfeVersion>3.28.0.0</GfeVersion>
+  <sessionUrl0>rtsp://192.168.1.10:47998</sessionUrl0>
+  <ServerCodecModeSupport>589823</ServerCodecModeSupport>
+</root>

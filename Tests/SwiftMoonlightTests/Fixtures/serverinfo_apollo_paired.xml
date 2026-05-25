@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root status_code="200">
+  <hostname>Test Apollo Host</hostname>
+  <paired>1</paired>
+  <appversion>Apollo-0.4.6</appversion>
+  <sessionUrl0>rtsp://192.168.1.11:47998</sessionUrl0>
+  <ServerCodecModeSupport>589823</ServerCodecModeSupport>
+</root>

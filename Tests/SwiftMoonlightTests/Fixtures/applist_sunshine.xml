@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root status_code="200">
+  <App>
+    <ID>desktop</ID>
+    <AppTitle>Desktop</AppTitle>
+    <IsHdrSupported>0</IsHdrSupported>
+  </App>
+  <App>
+    <ID>steam</ID>
+    <AppTitle>Steam</AppTitle>
+    <IsHdrSupported>1</IsHdrSupported>
+  </App>
+</root>
