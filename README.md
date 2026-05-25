@@ -1,137 +1,185 @@
 # swift-moonlight
 
+[![GitHub](https://img.shields.io/badge/-GitHub-181717?style=flat-square&logo=github&logoColor=white)](https://github.com/wiedymi)
+[![Twitter](https://img.shields.io/badge/-Twitter-1DA1F2?style=flat-square&logo=twitter&logoColor=white)](https://x.com/wiedymi)
+[![Email](https://img.shields.io/badge/-Email-EA4335?style=flat-square&logo=gmail&logoColor=white)](mailto:contact@wiedymi.com)
+[![Discord](https://img.shields.io/badge/-Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/zemMZtrkSb)
+[![Support me](https://img.shields.io/badge/-Support%20me-ff69b4?style=flat-square&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/vivy-company)
+
 Pure Swift Moonlight-compatible client stack for Apple platforms.
 
-Apple packaging note:
-- Opus is bundled as a repo-managed static XCFramework at `Vendor/COpus.xcframework`
-- Rebuild it with `./scripts/build-opus-xcframework.sh`
-- This avoids host-local Homebrew or `pkg-config` dependencies for app builds
+This package focuses on protocol, transport, media, input, and runtime orchestration for Sunshine and Apollo hosts. App UI is intentionally kept outside the core library so consumers can build their own SwiftUI, UIKit, AppKit, or game-surface integrations.
 
-License:
-- MIT
+## Status
 
-Initial scope:
-- iOS
-- iPadOS
-- macOS
+Experimental. The package builds, has a broad headless test suite, and includes live-host smoke/capture tooling, but it is not a production-ready Moonlight client yet. Public APIs may change while interoperability gaps are closed.
 
-Rendering:
-- Metal for production frame rendering on Apple platforms
+See `docs/PARITY_ROADMAP.md` for the current production-readiness matrix.
 
-Target parity baseline:
-- Feature parity with the currently implemented subset in `refs/moonlight-harmonyos`
+## Features
 
-Project rules:
-- This repository is a clean-room Swift implementation.
-- Reference repositories under `refs/` are for protocol study, behavior confirmation, and gaps in public docs.
-- Do not translate upstream GPL code line by line.
-- Keep the implementation clean-room so the project can remain MIT-licensed.
-- When behavior is learned from references rather than formal docs, record that in local notes or code comments at the boundary where it matters.
+- Pure Swift client/session API for Apple platforms
+- Sunshine and Apollo host model with compatibility profiles and host quirks
+- Bonjour discovery plus manual host entry
+- Host info, app list, launch, RTSP negotiation, and UDP channel establishment
+- Crypto-backed pairing with RSA identity persistence
+- Apollo OTP-assisted pairing support
+- Control-channel parsing and encrypted control framing
+- Video/audio packet ingest with RTP/bare packet parsing and loss metrics
+- VideoToolbox-first decode path with a pluggable fallback decoder boundary
+- Metal renderer with SDR, HDR metadata, EDR opt-in, and presentation geometry helpers
+- Opus decoder and AVAudioEngine-backed audio sink
+- Semantic input encoding for mouse, keyboard, touch, pen, and controllers
+- GameController integration boundary for Xbox and DualSense-class controllers
+- Headless `swift-moonlight-smoke` and `swift-moonlight-capture` tools for real-host verification
+- macOS SwiftUI test app for local interoperability testing
 
-## Layout
+## Platforms
 
-- `refs/`: upstream reference repositories as git submodules
-- `Sources/SwiftMoonlight/`: pure Swift implementation
-- `Tests/SwiftMoonlightTests/`: tests
-- `docs/`: architecture, protocol notes, and clean-room records
+- iOS 17+
+- macOS 14+
+- tvOS 17+
+- Swift tools 6.0+
 
-Core project docs:
-- `docs/SPEC.md`: internal implementation spec
-- `docs/ARCHITECTURE.md`: codebase and module boundaries
-- `docs/HEADLESS_TESTING.md`: test strategy and CI model
-- `docs/FIXTURES.md`: required fixture inventory and provenance rules
-- `docs/APOLLO_COMPATIBILITY.md`: Apollo-specific compatibility tracking
-- `docs/PARITY_ROADMAP.md`: production-readiness and Moonlight parity gap matrix
-- `docs/BINARY_LAYOUTS.md`: index for exact packet layout docs
-- `docs/OBSERVED_BEHAVIORS.md`: undocumented behavior tracking
-- `docs/api/`: developer-facing API contracts and examples
-- `docs/protocol/`: subsystem-level wire and sequencing contracts
+## Installation
 
-Implemented runtime building blocks:
-- host info, app list, launch, RTSP negotiation, and channel establishment
-- live TCP RTSP transport implementation
-- live UDP channel establishment with Sunshine-compatible ping probes
-- periodic Sunshine-compatible media keepalives on live video/audio sockets
-- crypto-backed pairing coordination with final `pairchallenge` verification
-- production-grade P-256 pairing crypto with key-store-backed private key persistence
-- typed pairing auth modes, including Apollo OTP-assisted pairing
-- remote host-side unpair through the pairing service boundary
-- compatibility profile and quirk modeling for Sunshine vs Apollo
-- Bonjour-based `_nvstream._tcp` host discovery on Apple platforms
-- persistent `FileHostStore` and `FileIdentityStore` implementations
-- opt-in Apple Keychain-backed client identity and RSA pairing material stores for app integrations
-- control-channel parsing and encrypted control framing
-- semantic input encoding plus runtime input dispatch
-- controller-source integration boundary for Apple `GameController`
-- video/audio packet ingest and simple depacketization
-- hardware-first Apple video path with `VideoToolboxDecoder`, `FallbackVideoDecoder`, `MetalRenderer`, and `MetalLayerTarget`
-- `AppleMediaComponents` convenience wiring for the recommended Apple playback stack
-- socket-backed runtime assembly through `ChannelSocketFactory` and `SessionRuntimeFactory`
-- negotiated runtime encryption wiring for control-v2 plus encrypted video/audio ingest
-- headless `IntegrationHarness` that reuses the public API, supports environment-backed smoke configuration, and reports structured pass/fail reasons
-- `ProductionClientFactory` to assemble the current default app-facing stack
-- `swift-moonlight-smoke` executable for environment-backed headless Sunshine or Apollo smoke runs
-- `swift-moonlight-test-app` macOS SwiftUI executable for manual real-host testing
+Add to your `Package.swift`:
 
-## Real Host Testing
+```swift
+dependencies: [
+    .package(url: "https://github.com/wiedymi/swift-moonlight.git", branch: "main")
+]
+```
+
+Then add the library target:
+
+```swift
+.target(
+    name: "YourApp",
+    dependencies: [
+        "SwiftMoonlight"
+    ]
+)
+```
+
+## Quick Start
+
+```swift
+import Foundation
+import SwiftMoonlight
+
+let storageDirectory = URL(filePath: "/path/to/app-support/swift-moonlight")
+try FileManager.default.createDirectory(
+    at: storageDirectory,
+    withIntermediateDirectories: true
+)
+
+let configuration = try ProductionClientFactory.configuration(
+    storageDirectory: storageDirectory,
+    displayName: "My Moonlight App",
+    credentialStorage: .keychain(.init(service: "com.example.moonlight"))
+)
+
+let client = MoonlightClient(configuration: configuration)
+
+let host = try await client.addHost(
+    .init(address: "192.0.2.50", port: 47989)
+)
+
+try await client.pair(hostID: host.id, pin: "1234")
+
+let apps = try await client.fetchApps(hostID: host.id)
+let desktop = apps.first { $0.name == "Desktop" } ?? apps[0]
+
+let session = try await client.openSession(
+    hostID: host.id,
+    appID: desktop.id,
+    configuration: .default1080p60
+)
+
+let runtime = try await client.prepareRuntime(for: session, hostID: host.id)
+runtime.runtime.start()
+
+// Attach renderer/decoder/audio components before or immediately after runtime startup.
+// On Apple platforms, `AppleMediaComponents.attachRecommendedPlaybackComponents(...)`
+// wires VideoToolbox, Metal, Opus, and AVAudioEngine for a CAMetalLayer surface.
+```
+
+## Apple Playback Components
+
+For a Metal-backed app surface:
+
+```swift
+#if canImport(Metal) && canImport(QuartzCore) && canImport(AVFoundation)
+try await AppleMediaComponents.attachRecommendedPlaybackComponents(
+    to: session,
+    device: metalDevice,
+    layer: metalLayer,
+    preferredDecodeMode: .hardwareFirst
+)
+#endif
+```
+
+## Running Tests
+
+```bash
+swift test
+```
+
+## Real Host Smoke
 
 Headless smoke test:
 
 ```bash
-SWIFT_MOONLIGHT_TEST_HOST=192.168.1.50 \
+SWIFT_MOONLIGHT_TEST_HOST=192.0.2.50 \
 SWIFT_MOONLIGHT_TEST_PIN=1234 \
 SWIFT_MOONLIGHT_TEST_APP_ID=desktop \
 swift run swift-moonlight-smoke
 ```
 
-Headless capture with explicit stream settings:
+Headless capture:
 
 ```bash
-SWIFT_MOONLIGHT_TEST_HOST=192.168.1.50 \
+SWIFT_MOONLIGHT_TEST_HOST=192.0.2.50 \
 SWIFT_MOONLIGHT_TEST_APP_ID=desktop \
 SWIFT_MOONLIGHT_CAPTURE_DYNAMIC_RANGE=hdr \
 SWIFT_MOONLIGHT_CAPTURE_CODECS=hevc,h264 \
 swift run swift-moonlight-capture
 ```
 
-Manual test app:
-
-```bash
-swift run swift-moonlight-test-app
-```
-
-`swift run swift-moonlight-test-app` launches the SwiftUI target as a plain executable, which is useful for quick compile checks but does not behave like a normal macOS app bundle. For an interactive app with normal focus, activation, icon, and bundle metadata, use:
+Manual macOS test app:
 
 ```bash
 ./scripts/build-test-app.sh
 ```
 
-To generate and open the Xcode project instead:
+Or generate and open the Xcode project:
 
 ```bash
 ./scripts/build-test-app.sh --open-project
 ```
 
-The generated app target is macOS-only and is intended for local interoperability testing against real Sunshine or Apollo hosts. It supports:
-- Bonjour discovery
-- manual host entry
-- PIN pairing
-- Apollo OTP pairing via passphrase
-- app list fetch
-- live session startup with the current Metal + VideoToolbox + Opus playback stack
+## Docs
 
-## Reference Repositories
+- `docs/SPEC.md` - implementation scope and acceptance criteria
+- `docs/ARCHITECTURE.md` - module boundaries and dependency direction
+- `docs/PARITY_ROADMAP.md` - current production-readiness matrix
+- `docs/HEADLESS_TESTING.md` - smoke, capture, and fixture strategy
+- `docs/FIXTURES.md` - fixture inventory and provenance rules
+- `docs/BINARY_LAYOUTS.md` - index for exact packet layout docs
+- `docs/OBSERVED_BEHAVIORS.md` - clean-room notes for undocumented host behavior
+- `docs/APOLLO_COMPATIBILITY.md` - Apollo-specific compatibility notes
+- `docs/api/` - developer-facing API contracts
+- `docs/protocol/` - protocol sequencing notes
+- `docs/binary/` - packet and binary layout notes
 
-- `refs/moonlight-harmonyos`: parity target for currently implemented end-user features
-- `refs/moonlight-common-c`: protocol and transport behavior reference
-- `refs/moonlight-ios`: Apple platform integration reference
-- `refs/moonlight-android`: additional client behavior reference
-- `refs/sunshine`: host-side behavior reference
-- `refs/apollo`: Apollo host behavior reference
-- `refs/moonlight-docs`: public Moonlight documentation
+## Repository Notes
 
-## Next Steps
+- `refs/` contains upstream reference repositories as git submodules for behavioral study only.
+- This repository is a clean-room Swift implementation under MIT. Do not copy, paste, or mechanically port GPL reference code.
+- Opus is bundled as `Vendor/COpus.xcframework` and can be rebuilt with `./scripts/build-opus-xcframework.sh`.
+- ENet is vendored under `Vendor/ENet`.
 
-1. Fill the remaining interoperability gaps such as deeper media recovery behavior and live end-to-end host coverage.
-2. Expand Sunshine and Apollo smoke coverage on real hosts using the environment-backed `IntegrationHarness`.
-3. Continue replacing remaining fixture-only protocol assumptions with captured interoperability evidence.
+## License
+
+MIT
