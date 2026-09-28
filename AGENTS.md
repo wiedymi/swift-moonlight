@@ -5,7 +5,7 @@ Instructions for agents working in this repository.
 ## Project Intent
 
 - Build a pure Swift Moonlight-compatible client stack for Apple platforms.
-- Target iOS, iPadOS, and macOS.
+- Target iOS, iPadOS, macOS, and visionOS.
 - Production rendering backend is Metal.
 - Preferred decode path is hardware-first with software fallback.
 - v1 host targets are Sunshine and Apollo.

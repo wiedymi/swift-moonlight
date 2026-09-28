@@ -39,7 +39,11 @@ See `docs/PARITY_ROADMAP.md` for the current production-readiness matrix.
 - iOS 17+
 - macOS 14+
 - tvOS 17+
+- visionOS 1+
 - Swift tools 6.0+
+
+The visionOS support is for the `SwiftMoonlight` library. This repository does
+not include a visionOS app or a spatial presentation surface.
 
 ## Installation
 

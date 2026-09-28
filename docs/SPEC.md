@@ -14,6 +14,7 @@ Primary targets:
 - iOS
 - iPadOS
 - macOS
+- visionOS (library integration; app UI is supplied by the consumer)
 
 Primary host target:
 - Sunshine

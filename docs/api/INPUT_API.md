@@ -255,6 +255,15 @@ Implemented runtime pieces:
 
 `ControllerSessionBridge` forwards normalized controller events into `MoonlightSession.send(.controller(...))`.
 
+For a visionOS app, route gamepad events to the app scene. In SwiftUI, add
+`.handlesGameControllerEvents(matching: .gamepad)` to the active stream view.
+In UIKit, add a `GCEventInteraction` to the active view. Keep that view active
+while streaming so system navigation does not take the controller events.
+The library supplies the controller source and event bridge; the app supplies
+the view and its event routing. Test this with a paired physical controller
+on a Vision Pro.
+See Apple's [controller event routing guide](https://developer.apple.com/documentation/gamecontroller/discovering-game-controllers).
+
 Current implementation notes:
 - the Apple path is built around `GameController`
 - the default runtime source currently polls controller snapshots rather than relying on connection callbacks

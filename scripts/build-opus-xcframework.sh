@@ -102,6 +102,8 @@ build_opus "iossim" "iOS" "iphonesimulator" "x86_64" "17.0"
 build_opus "tvos" "tvOS" "appletvos" "arm64" "17.0"
 build_opus "tvossim" "tvOS" "appletvsimulator" "arm64" "17.0"
 build_opus "tvossim" "tvOS" "appletvsimulator" "x86_64" "17.0"
+build_opus "visionos" "visionOS" "xros" "arm64" "1.0"
+build_opus "visionossim" "visionOS" "xrsimulator" "arm64" "1.0"
 
 MACOS_UNIVERSAL="${WORK_DIR}/libopus-macos.a"
 IOSSIM_UNIVERSAL="${WORK_DIR}/libopus-iossim.a"
@@ -126,6 +128,8 @@ xcodebuild -create-xcframework \
     -library "${IOSSIM_UNIVERSAL}" -headers "${HEADERS_DIR}" \
     -library "${WORK_DIR}/install-tvos-arm64/lib/libopus.a" -headers "${HEADERS_DIR}" \
     -library "${TVOSSIM_UNIVERSAL}" -headers "${HEADERS_DIR}" \
+    -library "${WORK_DIR}/install-visionos-arm64/lib/libopus.a" -headers "${HEADERS_DIR}" \
+    -library "${WORK_DIR}/install-visionossim-arm64/lib/libopus.a" -headers "${HEADERS_DIR}" \
     -output "${OUTPUT_DIR}"
 
 cp "${SOURCE_DIR}/COPYING" "${OUTPUT_DIR}/LICENSE"

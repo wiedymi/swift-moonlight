@@ -35,6 +35,15 @@ Pass conditions:
 - video packet parsing
 - audio packet parsing
 
+## Platform Builds
+
+- Build the `SwiftMoonlight` library for visionOS device and simulator.
+- Confirm the checked-in Opus XCFramework has both visionOS libraries.
+- Run the headless Swift test suite on macOS after platform changes.
+- Test streaming, audio, and physical controllers in a visionOS app on a device
+  before claiming runtime support. A platform build alone does not prove these
+  paths work during a live session.
+
 ## Fixture Tests
 
 - approved pairing transcripts
