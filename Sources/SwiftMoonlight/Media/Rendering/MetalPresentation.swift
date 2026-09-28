@@ -44,7 +44,7 @@ public struct MetalPresentationConfiguration: Sendable, Equatable {
 
     public init(
         contentMode: MetalPresentationContentMode = .stretch,
-        dynamicRangeMode: MetalPresentationDynamicRangeMode = .standardDynamicRange,
+        dynamicRangeMode: MetalPresentationDynamicRangeMode = .automatic,
         edrCapabilities: MetalPresentationEDRCapabilities? = nil
     ) {
         self.contentMode = contentMode
@@ -94,7 +94,7 @@ extension MetalPresentationConfiguration {
             return .extendedDynamicRange
         case .automatic:
             guard format?.dynamicRange == .hdr,
-                  edrCapabilities?.supportsExtendedDynamicRange == true else {
+                  edrCapabilities?.supportsExtendedDynamicRange != false else {
                 return .standardDynamicRange
             }
             return .extendedDynamicRange

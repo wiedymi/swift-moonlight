@@ -35,6 +35,30 @@ func metalLayerTargetPreparesStandardDynamicRangeLayerByDefault() async throws {
 }
 
 @Test
+func metalLayerTargetPreparesExtendedDynamicRangeLayerByDefaultForHDR() async throws {
+    guard let device = MTLCreateSystemDefaultDevice() else {
+        return
+    }
+
+    let layerReference = SendableMetalLayerReference(layer: CAMetalLayer())
+    let target = try MetalLayerTarget(device: device, layerReference: layerReference)
+
+    try await target.prepare(
+        format: VideoFormat(
+            codec: .hevc,
+            dimensions: CGSize(width: 1_920, height: 1_080),
+            dynamicRange: .hdr
+        )
+    )
+
+    #expect(layerReference.layer.pixelFormat == .rgba16Float)
+    #expect(layerReference.layer.colorspace != nil)
+    #if os(macOS) || os(iOS)
+    #expect(layerReference.layer.wantsExtendedDynamicRangeContent == true)
+    #endif
+}
+
+@Test
 func metalLayerTargetPreparesExtendedDynamicRangeLayerWhenRequested() async throws {
     guard let device = MTLCreateSystemDefaultDevice() else {
         return
@@ -63,7 +87,7 @@ func metalLayerTargetPreparesExtendedDynamicRangeLayerWhenRequested() async thro
 }
 
 @Test
-func metalLayerTargetAutomaticDynamicRangeStaysSDRWithoutCapabilities() async throws {
+func metalLayerTargetKeepsSDRWhenExplicitlyRequestedForHDR() async throws {
     guard let device = MTLCreateSystemDefaultDevice() else {
         return
     }
@@ -72,7 +96,38 @@ func metalLayerTargetAutomaticDynamicRangeStaysSDRWithoutCapabilities() async th
     let target = try MetalLayerTarget(
         device: device,
         layerReference: layerReference,
-        presentationConfiguration: MetalPresentationConfiguration(dynamicRangeMode: .automatic)
+        presentationConfiguration: MetalPresentationConfiguration(dynamicRangeMode: .standardDynamicRange)
+    )
+
+    try await target.prepare(
+        format: VideoFormat(
+            codec: .hevc,
+            dimensions: CGSize(width: 1_920, height: 1_080),
+            dynamicRange: .hdr
+        )
+    )
+
+    #expect(layerReference.layer.pixelFormat == .bgra8Unorm)
+    #expect(layerReference.layer.colorspace == nil)
+    #if os(macOS) || os(iOS)
+    #expect(layerReference.layer.wantsExtendedDynamicRangeContent == false)
+    #endif
+}
+
+@Test
+func metalLayerTargetAutomaticDynamicRangeStaysSDRWhenCapabilitiesDenyEDR() async throws {
+    guard let device = MTLCreateSystemDefaultDevice() else {
+        return
+    }
+
+    let layerReference = SendableMetalLayerReference(layer: CAMetalLayer())
+    let target = try MetalLayerTarget(
+        device: device,
+        layerReference: layerReference,
+        presentationConfiguration: MetalPresentationConfiguration(
+            dynamicRangeMode: .automatic,
+            edrCapabilities: MetalPresentationEDRCapabilities(currentHeadroom: 1.0)
+        )
     )
 
     try await target.prepare(

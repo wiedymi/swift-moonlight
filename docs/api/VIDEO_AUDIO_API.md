@@ -65,9 +65,10 @@ Apple Metal presentation:
 - `.stretch` is the default and fills the whole layer; use it when input is normalized against the whole surface or the stream is relaunched to match the local surface size
 - `.aspectFit` preserves frame aspect with letterboxing or pillarboxing
 - `.aspectFill` preserves frame aspect while cropping overflow
-- `.standardDynamicRange` is the default dynamic-range mode and presents through an SDR `bgra8Unorm` layer with HDR frames tone-mapped by the shader
-- `.extendedDynamicRange` opts into an EDR-capable `rgba16Float` layer and extended-linear shader output; apps should only enable it after checking the display and validating host color metadata
-- `.automatic` stays SDR unless the prepared `VideoFormat` is HDR and `edrCapabilities.supportsExtendedDynamicRange` is true
+- `.automatic` is the default dynamic-range mode. It uses an SDR `bgra8Unorm` layer for SDR streams and an EDR `rgba16Float` layer with extended-linear shader output for HDR streams when display capabilities are not supplied
+- when `edrCapabilities` is supplied, `.automatic` uses EDR for an HDR stream only if the display reports EDR headroom; this lets apps keep SDR tone mapping on displays without EDR
+- `.standardDynamicRange` always uses the SDR layer and tone-maps HDR frames in the shader
+- `.extendedDynamicRange` always uses the EDR layer; apps can use it when they manage the display policy themselves
 - `MetalPresentationEDRCapabilities(screen:)` can be built from `NSScreen` or `UIScreen` on the main actor so app code does not need to duplicate Apple EDR headroom checks
 - `MetalPresentationGeometry` exposes the matching `contentRect`, normalized `sourceRect`, and `normalizedFramePoint(forDrawablePoint:)` mapping for absolute pointer input
 - absolute pointer mapping must use the same presentation geometry chosen by the app, otherwise host cursor coordinates can drift from the pixels shown to the user
@@ -172,31 +173,17 @@ Current implementation note:
 ## Usage
 
 ```swift
-#if os(macOS)
-let displayCapabilities = await MainActor.run {
-    NSScreen.main.map(MetalPresentationEDRCapabilities.init(screen:))
-}
-#elseif os(iOS)
-let displayCapabilities = await MainActor.run {
-    MetalPresentationEDRCapabilities(screen: UIScreen.main)
-}
-#else
-let displayCapabilities: MetalPresentationEDRCapabilities? = nil
-#endif
-
 try await AppleMediaComponents.attachRecommendedPlaybackComponents(
     to: session,
     device: device,
     layer: metalLayer,
     preferredDecodeMode: configuration.preferredDecodeMode,
     softwareFallbackVideoDecoder: softwareDecoder,
-    presentationConfiguration: MetalPresentationConfiguration(
-        contentMode: .stretch,
-        dynamicRangeMode: .automatic,
-        edrCapabilities: displayCapabilities
-    )
+    presentationConfiguration: MetalPresentationConfiguration(contentMode: .stretch)
 )
 ```
+
+Apps that know the active display can pass `MetalPresentationEDRCapabilities(screen:)` to retain SDR tone mapping when the display has no EDR headroom. Without these capabilities, an HDR stream uses an EDR layer. The display can then clip values above its EDR limit; the library does not apply display-aware tone mapping in this case.
 
 ## DX Constraints
 
