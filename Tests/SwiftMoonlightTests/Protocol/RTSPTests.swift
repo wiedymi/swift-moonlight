@@ -19,14 +19,15 @@ private actor IntCapture {
 
 @Test
 func parsesRTSPResponseAndHeaders() throws {
-    let raw = Data((
-        "RTSP/1.0 200 OK\r\n" +
-        "CSeq: 3\r\n" +
-        "Session: DEADBEEFCAFE;timeout=90\r\n" +
-        "Transport: unicast;server_port=48000-48001;source=192.168.1.10\r\n" +
-        "X-SS-Ping-Payload: ABCDEFGH\r\n" +
-        "\r\n"
-    ).utf8)
+    let responseText = [
+        "RTSP/1.0 200 OK\r\n",
+        "CSeq: 3\r\n",
+        "Session: DEADBEEFCAFE;timeout=90\r\n",
+        "Transport: unicast;server_port=48000-48001;source=192.168.1.10\r\n",
+        "X-SS-Ping-Payload: ABCDEFGH\r\n",
+        "\r\n",
+    ].joined()
+    let raw = Data(responseText.utf8)
 
     let message = try RTSPMessageParser().parse(raw)
 
@@ -65,15 +66,16 @@ func serializesRTSPOptionsRequest() {
 
 @Test
 func extractsSessionInfoFromSetupResponse() throws {
-    let raw = Data((
-        "RTSP/1.0 200 OK\r\n" +
-        "CSeq: 2\r\n" +
-        "Session: DEADBEEFCAFE;timeout=90\r\n" +
-        "Transport: unicast;server_port=47998-47999;source=192.168.1.10\r\n" +
-        "X-SS-Ping-Payload: ABCDEFGH\r\n" +
-        "X-SS-Connect-Data: 0x1234\r\n" +
-        "\r\n"
-    ).utf8)
+    let responseText = [
+        "RTSP/1.0 200 OK\r\n",
+        "CSeq: 2\r\n",
+        "Session: DEADBEEFCAFE;timeout=90\r\n",
+        "Transport: unicast;server_port=47998-47999;source=192.168.1.10\r\n",
+        "X-SS-Ping-Payload: ABCDEFGH\r\n",
+        "X-SS-Connect-Data: 0x1234\r\n",
+        "\r\n",
+    ].joined()
+    let raw = Data(responseText.utf8)
 
     let message = try RTSPMessageParser().parse(raw)
     guard case let .response(response) = message else {

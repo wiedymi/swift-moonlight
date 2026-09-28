@@ -10,63 +10,32 @@ This document defines the codebase shape before protocol-heavy implementation st
 - headless-first testability
 - Metal-only production rendering on Apple platforms
 
-## Proposed Package Layout
+## Package Layout
 
-- `SwiftMoonlight/Core`
-  - shared types
-  - errors
-  - metrics
-  - state machine
-  - clocks
+The folders below are groups inside the `SwiftMoonlight` target. They are not
+separate Swift modules.
 
-- `SwiftMoonlight/Hosts`
-  - host model
-  - host persistence
-  - discovery
-  - compatibility profiles
+- `API/`: public client and session workflows, runtime setup, and the headless
+  `Harness/` configuration, report, and runner.
+- `Core/`: host, pairing, stream, session, metrics, and controller feedback
+  types, plus errors and the state machine.
+- `Dependencies/`: protocols for clocks, stores, transport, media, and input.
+- `Input/`: input types, encoding, dispatch, and controller adapters. The
+  GameController adapter is in `AppleGameControllerSource.swift`.
+- `Media/Audio/`, `Media/Video/`, `Media/Rendering/`, and `Media/Transport/`:
+  audio and video packet handling, decoding, rendering, and shared RTP parsing.
+  `MediaPipeline`, media types, crypto, and test decoders remain at `Media/`.
+- `Network/HTTP/`, `Network/UDP/`, `Network/RTSP/`, `Network/Control/`, and
+  `Network/Discovery/`: live transport and discovery implementations.
+- `Protocol/Pairing/`, `Protocol/RTSP/`, `Protocol/Control/`, `Protocol/Host/`,
+  and `Protocol/Session/`: protocol rules, parsers, and handshake services.
+- `Storage/`: file and Keychain stores.
+- `TestSupport/`: clocks, stores, media, input, and transport test doubles.
 
-- `SwiftMoonlight/Pairing`
-  - client identity
-  - certificate/key storage
-  - pairing state machine
-
-- `SwiftMoonlight/Session`
-  - host info
-  - app list
-  - launch negotiation
-  - session lifecycle
-
-- `SwiftMoonlight/Transport`
-  - TCP/UDP transport abstraction
-  - request/response codecs
-  - stream channels
-
-- `SwiftMoonlight/Input`
-  - semantic input model
-  - protocol encoders
-  - GameController adapters
-
-- `SwiftMoonlight/Video`
-  - depacketizer
-  - decode abstraction
-  - VideoToolbox decoder
-  - frame queue
-
-- `SwiftMoonlight/Rendering`
-  - renderer abstraction
-  - Metal renderer
-  - null renderer
-
-- `SwiftMoonlight/Audio`
-  - depacketizer
-  - decode abstraction
-  - audio sink abstraction
-  - null sink
-
-- `SwiftMoonlight/TestSupport`
-  - mocks
-  - fixtures
-  - loopback/fault transport
+The `SwiftMoonlightCapture` target groups configuration, reports, image
+analysis, media adapters, and its runner. The macOS `SwiftMoonlightTestApp`
+target groups settings, its model, and views. Tests use topic folders under
+`Tests/SwiftMoonlightTests/`.
 
 ## Dependency Direction
 
