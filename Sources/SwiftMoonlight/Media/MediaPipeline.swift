@@ -12,6 +12,10 @@ public actor MediaPipeline {
     private var cachedVideoParameterSets: [Data] = []
     private var totalVideoDecodeLatencyMs = 0.0
     private var videoDecodeSamples = 0
+    private var totalVideoQueueLatencyMs = 0.0
+    private var videoQueueSamples = 0
+    private var totalVideoRenderSubmissionLatencyMs = 0.0
+    private var videoRenderSubmissionSamples = 0
     private var totalHostProcessingLatencyMs = 0.0
     private var hostProcessingLatencySamples = 0
     private var totalAudioDecodeLatencyMs = 0.0
@@ -70,7 +74,14 @@ public actor MediaPipeline {
         }
     }
 
-    public func ingestVideo(_ frame: EncodedVideoFrame) async throws {
+    public func ingestVideo(_ frame: EncodedVideoFrame, queuedAt: ContinuousClock.Instant? = nil) async throws {
+        if let queuedAt {
+            let latencyMs = Self.milliseconds(queuedAt.duration(to: ContinuousClock().now))
+            totalVideoQueueLatencyMs += latencyMs
+            videoQueueSamples += 1
+            stats.averageVideoQueueLatencyMs = totalVideoQueueLatencyMs / Double(videoQueueSamples)
+            stats.maxVideoQueueLatencyMs = max(stats.maxVideoQueueLatencyMs ?? 0, latencyMs)
+        }
         guard let videoDecoder else {
             throw MoonlightError(.unsupportedOperation, message: "No video decoder attached")
         }
@@ -96,12 +107,7 @@ public actor MediaPipeline {
         recordVideoDecodeLatency(from: decodeStartedAt, to: decodeFinishedAt)
         stats.decodedVideoFrames += decodedFrames.count
 
-        if let renderer {
-            for decodedFrame in decodedFrames {
-                await renderer.render(decodedFrame)
-            }
-            stats.renderedVideoFrames += decodedFrames.count
-        }
+        await submitToRenderer(decodedFrames)
     }
 
     public func flushVideo() async throws {
@@ -112,12 +118,7 @@ public actor MediaPipeline {
         let decodedFrames = try await videoDecoder.flush()
         stats.decodedVideoFrames += decodedFrames.count
 
-        if let renderer {
-            for decodedFrame in decodedFrames {
-                await renderer.render(decodedFrame)
-            }
-            stats.renderedVideoFrames += decodedFrames.count
-        }
+        await submitToRenderer(decodedFrames)
     }
 
     public func ingestAudio(_ packet: EncodedAudioPacket) async throws {
@@ -136,8 +137,9 @@ public actor MediaPipeline {
         stats.decodedAudioBuffers += 1
 
         if let audioSink {
-            await audioSink.play(buffer)
-            stats.playedAudioBuffers += 1
+            if await audioSink.play(buffer) == .accepted {
+                stats.playedAudioBuffers += 1
+            }
         }
     }
 
@@ -148,6 +150,25 @@ public actor MediaPipeline {
 
     public func snapshot() -> MediaPipelineStats {
         stats
+    }
+
+    private func submitToRenderer(_ frames: [DecodedVideoFrame]) async {
+        guard let renderer else { return }
+        for frame in frames {
+            let startedAt = ContinuousClock().now
+            await renderer.render(frame)
+            let latencyMs = Self.milliseconds(startedAt.duration(to: ContinuousClock().now))
+            totalVideoRenderSubmissionLatencyMs += latencyMs
+            videoRenderSubmissionSamples += 1
+            stats.averageVideoRenderSubmissionLatencyMs = totalVideoRenderSubmissionLatencyMs / Double(videoRenderSubmissionSamples)
+            stats.maxVideoRenderSubmissionLatencyMs = max(stats.maxVideoRenderSubmissionLatencyMs ?? 0, latencyMs)
+        }
+        stats.renderedVideoFrames += frames.count
+    }
+
+    private static func milliseconds(_ duration: Duration) -> Double {
+        let components = duration.components
+        return max(0, Double(components.seconds) * 1_000 + Double(components.attoseconds) / 1e15)
     }
 
     private func recordVideoDecodeLatency(from startedAt: Date, to finishedAt: Date) {

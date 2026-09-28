@@ -93,6 +93,32 @@ func launchSessionServiceBuildsQueryAndParsesResponse() async throws {
 }
 
 @Test
+func launchSessionDoesNotSendRequestWhenKeyCreationFails() async throws {
+    let host = MoonlightHost(
+        id: HostID(),
+        name: "Sunshine Host",
+        endpoint: .init(address: "192.168.1.10", port: 47989),
+        kind: .sunshine,
+        pairingState: .paired,
+        capabilities: .default
+    )
+    let transport = RecordingLaunchTransport(responseData: Data())
+    let service = LaunchSessionService(transport: transport) { _, _, _ in
+        throw MoonlightError(.unsupportedOperation, message: "Random input failed")
+    }
+
+    await #expect(throws: MoonlightError.self) {
+        _ = try await service.launchSession(
+            for: host,
+            appID: "desktop",
+            configuration: .default1080p60,
+            identity: ClientIdentity(identifier: UUID(), displayName: "Test Client")
+        )
+    }
+    #expect(await transport.recordedRequests().isEmpty)
+}
+
+@Test
 func productionLaunchDefaultsRequestApolloVirtualDisplay() async throws {
     let host = MoonlightHost(
         id: HostID(),

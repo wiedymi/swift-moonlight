@@ -152,9 +152,10 @@ public actor VideoIngestService {
     }
 
     private func submitVideoFrameToPipeline(_ frame: EncodedVideoFrame) async throws {
+        let queuedAt = ContinuousClock().now
         guard let maxInFlightFrames = pipelineSubmissionMode.boundedMaxInFlightFrames else {
             do {
-                try await pipeline.ingestVideo(frame)
+                try await pipeline.ingestVideo(frame, queuedAt: queuedAt)
             } catch {
                 guard Self.isRecoverableVideoDecodeError(error) else {
                     throw error
@@ -174,7 +175,7 @@ public actor VideoIngestService {
                 return
             }
             do {
-                try await pipeline.ingestVideo(frame)
+                try await pipeline.ingestVideo(frame, queuedAt: queuedAt)
             } catch {
                 guard !Task.isCancelled else {
                     return

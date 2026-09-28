@@ -43,6 +43,19 @@ func parsesAndDepacketizesAudioPacket() async throws {
 }
 
 @Test
+func zeroAudioReorderWindowStillEmitsFirstPacket() async throws {
+    let depacketizer = SimpleAudioDepacketizer(reorderWindowSize: 0)
+    let packet = try AudioPacketParser().parse(
+        makeAudioPacket(sequenceNumber: 20, timestamp: 48_000, payload: Data([0xAB]))
+    )
+
+    let encoded = try await depacketizer.submit(packet)
+
+    #expect(encoded?.payload == Data([0xAB]))
+    #expect(await depacketizer.snapshotMissingPacketCount() == 0)
+}
+
+@Test
 func ignoresAudioFecPacketInsteadOfFeedingItToDecoder() async throws {
     let parser = AudioPacketParser()
     let depacketizer = SimpleAudioDepacketizer()

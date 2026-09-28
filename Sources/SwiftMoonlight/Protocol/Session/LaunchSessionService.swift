@@ -4,13 +4,13 @@ public struct LaunchSessionService: SessionService {
     public let transport: any SessionLaunchTransport
     public let queryBuilder: LaunchQueryBuilder
     public let responseParser: LaunchResponseParser
-    public let queryOptionsProvider: @Sendable (MoonlightHost, StreamConfiguration, ClientIdentity) -> LaunchQueryOptions
+    public let queryOptionsProvider: @Sendable (MoonlightHost, StreamConfiguration, ClientIdentity) throws -> LaunchQueryOptions
 
     public init(
         transport: any SessionLaunchTransport,
         queryBuilder: LaunchQueryBuilder = LaunchQueryBuilder(),
         responseParser: LaunchResponseParser = LaunchResponseParser(),
-        queryOptionsProvider: @escaping @Sendable (MoonlightHost, StreamConfiguration, ClientIdentity) -> LaunchQueryOptions
+        queryOptionsProvider: @escaping @Sendable (MoonlightHost, StreamConfiguration, ClientIdentity) throws -> LaunchQueryOptions
     ) {
         self.transport = transport
         self.queryBuilder = queryBuilder
@@ -24,7 +24,7 @@ public struct LaunchSessionService: SessionService {
         configuration: StreamConfiguration,
         identity: ClientIdentity
     ) async throws -> NegotiatedSession {
-        let options = queryOptionsProvider(host, configuration, identity)
+        let options = try queryOptionsProvider(host, configuration, identity)
         let query = queryBuilder.buildLaunchQuery(
             host: host,
             appID: appID,

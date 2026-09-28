@@ -11,7 +11,7 @@ public actor SimpleAudioDepacketizer {
     private var missingPacketCount = 0
 
     public init(reorderWindowSize: Int = 8) {
-        self.reorderWindowSize = reorderWindowSize
+        self.reorderWindowSize = min(max(reorderWindowSize, 1), 32_767)
     }
 
     public func submit(_ packet: AudioTransportPacket) throws -> EncodedAudioPacket? {
@@ -46,7 +46,9 @@ public actor SimpleAudioDepacketizer {
             }
         }
 
-        if pendingPackets.count >= reorderWindowSize {
+        if let nextSequenceNumber,
+           pendingPackets[nextSequenceNumber] == nil,
+           pendingPackets.count >= reorderWindowSize {
             return emitConcealmentPacket()
         }
 

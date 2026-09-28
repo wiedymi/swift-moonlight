@@ -194,6 +194,10 @@ public actor MoonlightSession: InputSending {
         playedAudioBuffers: Int? = nil,
         averageVideoDecodeLatencyMs: Double? = nil,
         maxVideoDecodeLatencyMs: Double? = nil,
+        averageVideoQueueLatencyMs: Double? = nil,
+        maxVideoQueueLatencyMs: Double? = nil,
+        averageVideoRenderSubmissionLatencyMs: Double? = nil,
+        maxVideoRenderSubmissionLatencyMs: Double? = nil,
         averageHostProcessingLatencyMs: Double? = nil,
         maxHostProcessingLatencyMs: Double? = nil,
         averageAudioDecodeLatencyMs: Double? = nil,
@@ -269,6 +273,18 @@ public actor MoonlightSession: InputSending {
         }
         if let maxVideoDecodeLatencyMs {
             snapshot.maxVideoDecodeLatencyMs = maxVideoDecodeLatencyMs
+        }
+        if let averageVideoQueueLatencyMs {
+            snapshot.averageVideoQueueLatencyMs = averageVideoQueueLatencyMs
+        }
+        if let maxVideoQueueLatencyMs {
+            snapshot.maxVideoQueueLatencyMs = maxVideoQueueLatencyMs
+        }
+        if let averageVideoRenderSubmissionLatencyMs {
+            snapshot.averageVideoRenderSubmissionLatencyMs = averageVideoRenderSubmissionLatencyMs
+        }
+        if let maxVideoRenderSubmissionLatencyMs {
+            snapshot.maxVideoRenderSubmissionLatencyMs = maxVideoRenderSubmissionLatencyMs
         }
         if let averageHostProcessingLatencyMs {
             snapshot.averageHostProcessingLatencyMs = averageHostProcessingLatencyMs
@@ -351,6 +367,10 @@ public actor MoonlightSession: InputSending {
         snapshot.playedAudioBuffers = pipelineStats.playedAudioBuffers
         snapshot.averageVideoDecodeLatencyMs = pipelineStats.averageVideoDecodeLatencyMs
         snapshot.maxVideoDecodeLatencyMs = pipelineStats.maxVideoDecodeLatencyMs
+        snapshot.averageVideoQueueLatencyMs = pipelineStats.averageVideoQueueLatencyMs
+        snapshot.maxVideoQueueLatencyMs = pipelineStats.maxVideoQueueLatencyMs
+        snapshot.averageVideoRenderSubmissionLatencyMs = pipelineStats.averageVideoRenderSubmissionLatencyMs
+        snapshot.maxVideoRenderSubmissionLatencyMs = pipelineStats.maxVideoRenderSubmissionLatencyMs
         snapshot.averageHostProcessingLatencyMs = pipelineStats.averageHostProcessingLatencyMs
         snapshot.maxHostProcessingLatencyMs = pipelineStats.maxHostProcessingLatencyMs
         snapshot.averageAudioDecodeLatencyMs = pipelineStats.averageAudioDecodeLatencyMs
@@ -366,6 +386,7 @@ public actor MoonlightSession: InputSending {
 
         try? await flushPendingInputIfPossible()
         await syncInputSenderMetrics()
+        await syncMediaPipelineMetrics()
 
         try? lifecycle.transition(to: .stopping)
         eventContinuation.yield(.stateChanged(.stopping))

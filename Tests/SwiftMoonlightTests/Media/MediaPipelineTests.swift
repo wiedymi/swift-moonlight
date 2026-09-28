@@ -3,6 +3,12 @@ import Foundation
 import Testing
 @testable import SwiftMoonlight
 
+private struct DroppingAudioSink: AudioSink {
+    func prepare(format: AudioFormat) async throws {}
+    func play(_ buffer: PCMBuffer) async -> AudioPlaybackResult { .dropped }
+    func teardown() async {}
+}
+
 @Test
 func mediaPipelineConfiguresVideoAndRendersDecodedFrames() async throws {
     let pipeline = MediaPipeline()
@@ -192,6 +198,27 @@ func mediaPipelineConfiguresAudioAndPlaysDecodedBuffers() async throws {
     #expect(playedBuffers == [buffer])
     #expect(stats.decodedAudioBuffers == 1)
     #expect(stats.playedAudioBuffers == 1)
+}
+
+@Test
+func mediaPipelineDoesNotCountDroppedAudioAsPlayed() async throws {
+    let pipeline = MediaPipeline()
+    let buffer = PCMBuffer(
+        sampleRate: 48_000,
+        channelCount: 2,
+        frameCount: 1,
+        bytesPerFrame: 4,
+        data: Data(repeating: 0, count: 4)
+    )
+    try await pipeline.attachAudioDecoder(RecordingAudioDecoder(outputs: [buffer]))
+    try await pipeline.attachAudioSink(DroppingAudioSink())
+    try await pipeline.configureAudio(format: .init(sampleRate: 48_000, channelCount: 2))
+
+    try await pipeline.ingestAudio(.init(timestamp: 1, payload: Data([0x01])))
+
+    let stats = await pipeline.snapshot()
+    #expect(stats.decodedAudioBuffers == 1)
+    #expect(stats.playedAudioBuffers == 0)
 }
 
 @Test

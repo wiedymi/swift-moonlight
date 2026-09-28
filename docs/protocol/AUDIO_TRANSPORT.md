@@ -85,6 +85,7 @@ The audio module must:
 
 Current implementation detail:
 - when an audio gap exceeds the bounded reorder window, the depacketizer emits a concealment packet and increments `missingAudioPackets`
+- the reorder window is limited to 1...32767 packets, within half of the 16-bit sequence space
 - packets that arrive behind the current expected RTP sequence number are treated as stale and discarded
 
 ## Headless Test Cases

@@ -52,6 +52,10 @@ public struct SessionMetricsSnapshot: Equatable, Sendable, Codable {
     public var playedAudioBuffers: Int
     public var averageVideoDecodeLatencyMs: Double?
     public var maxVideoDecodeLatencyMs: Double?
+    public var averageVideoQueueLatencyMs: Double?
+    public var maxVideoQueueLatencyMs: Double?
+    public var averageVideoRenderSubmissionLatencyMs: Double?
+    public var maxVideoRenderSubmissionLatencyMs: Double?
     public var averageHostProcessingLatencyMs: Double?
     public var maxHostProcessingLatencyMs: Double?
     public var averageAudioDecodeLatencyMs: Double?
@@ -92,6 +96,10 @@ public struct SessionMetricsSnapshot: Equatable, Sendable, Codable {
         playedAudioBuffers: Int = 0,
         averageVideoDecodeLatencyMs: Double? = nil,
         maxVideoDecodeLatencyMs: Double? = nil,
+        averageVideoQueueLatencyMs: Double? = nil,
+        maxVideoQueueLatencyMs: Double? = nil,
+        averageVideoRenderSubmissionLatencyMs: Double? = nil,
+        maxVideoRenderSubmissionLatencyMs: Double? = nil,
         averageHostProcessingLatencyMs: Double? = nil,
         maxHostProcessingLatencyMs: Double? = nil,
         averageAudioDecodeLatencyMs: Double? = nil,
@@ -131,6 +139,10 @@ public struct SessionMetricsSnapshot: Equatable, Sendable, Codable {
         self.playedAudioBuffers = playedAudioBuffers
         self.averageVideoDecodeLatencyMs = averageVideoDecodeLatencyMs
         self.maxVideoDecodeLatencyMs = maxVideoDecodeLatencyMs
+        self.averageVideoQueueLatencyMs = averageVideoQueueLatencyMs
+        self.maxVideoQueueLatencyMs = maxVideoQueueLatencyMs
+        self.averageVideoRenderSubmissionLatencyMs = averageVideoRenderSubmissionLatencyMs
+        self.maxVideoRenderSubmissionLatencyMs = maxVideoRenderSubmissionLatencyMs
         self.averageHostProcessingLatencyMs = averageHostProcessingLatencyMs
         self.maxHostProcessingLatencyMs = maxHostProcessingLatencyMs
         self.averageAudioDecodeLatencyMs = averageAudioDecodeLatencyMs

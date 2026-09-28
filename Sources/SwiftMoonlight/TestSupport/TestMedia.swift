@@ -46,8 +46,9 @@ public struct NullAudioSink: AudioSink {
         _ = format
     }
 
-    public func play(_ buffer: PCMBuffer) async {
+    public func play(_ buffer: PCMBuffer) async -> AudioPlaybackResult {
         _ = buffer
+        return .accepted
     }
 
     public func teardown() async {}
@@ -63,8 +64,9 @@ public actor RecordingAudioSink: AudioSink {
         preparedFormats.append(format)
     }
 
-    public func play(_ buffer: PCMBuffer) async {
+    public func play(_ buffer: PCMBuffer) async -> AudioPlaybackResult {
         playedBuffers.append(buffer)
+        return .accepted
     }
 
     public func teardown() async {}

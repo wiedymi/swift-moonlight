@@ -141,6 +141,7 @@ Current implementation:
 - launch queries emit `additionalStates=1` for reference-client parity
 - `LaunchResponseParser` parses Sunshine/Apollo `/launch` and `/resume` XML responses
 - `LaunchSessionService` composes the query builder, transport, and response parser behind the `SessionService` protocol and carries remote-input key material into `NegotiatedSession`
+- production launch fails before the request if random remote-input key creation fails
 - `RTSPMessageParser` parses RTSP requests and responses from wire text
 - `RTSPRequestFactory` and `RTSPRequestPlanBuilder` build DESCRIBE, SETUP, ANNOUNCE, and PLAY requests
 - `RTSPSessionInfoParser` extracts `Session`, `Transport.server_port`, `X-SS-Ping-Payload`, and `X-SS-Connect-Data`

@@ -31,6 +31,46 @@ func connectedUDPSocketSendsAndReceivesLoopbackPacketsViaHostname() async throws
 }
 
 @Test
+func boundUDPSocketCloseWakesIdleReceiver() async throws {
+    let socket = try BoundUDPSocket(remoteHost: "127.0.0.1", remotePort: 47_998)
+    let receiver = Task { try await socket.receivePacket() }
+
+    try await Task.sleep(for: .milliseconds(20))
+    await socket.close()
+
+    #expect(try await receiver.value == nil)
+}
+
+@Test
+func boundUDPSocketCancelWakesIdleReceiver() async throws {
+    let socket = try BoundUDPSocket(remoteHost: "127.0.0.1", remotePort: 47_998)
+    let receiver = Task { try await socket.receivePacket() }
+
+    try await Task.sleep(for: .milliseconds(20))
+    receiver.cancel()
+
+    #expect(try await receiver.value == nil)
+    await socket.close()
+}
+
+@Test
+func boundUDPSocketReceivesAfterRepeatedIdleWaits() async throws {
+    let sender = try LoopbackUDPServer()
+    let socket = try BoundUDPSocket(remoteHost: "127.0.0.1", remotePort: try await sender.localPort())
+    let localPort = try await socket.localPort()
+
+    for value in UInt8(0)..<UInt8(10) {
+        let receiver = Task { try await socket.receivePacket() }
+        try await Task.sleep(for: .milliseconds(2))
+        try await sender.send(Data([value]), to: localPort)
+        #expect(try await receiver.value == Data([value]))
+    }
+
+    await socket.close()
+    await sender.close()
+}
+
+@Test
 func channelSocketFactoryCreatesLoopbackReadySockets() async throws {
     let controlListener = try LoopbackUDPServer()
     let inputListener = try LoopbackUDPServer()

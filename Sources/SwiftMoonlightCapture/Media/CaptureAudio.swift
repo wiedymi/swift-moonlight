@@ -115,11 +115,12 @@ actor WAVCaptureAudioSink: AudioSink {
         preparedFormat = format
     }
 
-    func play(_ buffer: PCMBuffer) async {
+    func play(_ buffer: PCMBuffer) async -> AudioPlaybackResult {
         if preparedFormat == nil {
             preparedFormat = AudioFormat(sampleRate: buffer.sampleRate, channelCount: buffer.channelCount)
         }
         pcmData.append(buffer.data)
+        return .accepted
     }
 
     func teardown() async {

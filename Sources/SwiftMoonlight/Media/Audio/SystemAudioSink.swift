@@ -29,6 +29,9 @@ enum PCMBufferBridge {
     }
 
     static func makeAVAudioPCMBuffer(from buffer: PCMBuffer, format: AVAudioFormat) throws -> AVAudioPCMBuffer {
+        guard buffer.frameCount >= 0, buffer.frameCount <= UInt32.max else {
+            throw MoonlightError(.unsupportedOperation, message: "PCM frame count is out of range")
+        }
         guard let pcmBuffer = AVAudioPCMBuffer(
             pcmFormat: format,
             frameCapacity: AVAudioFrameCount(buffer.frameCount)
@@ -38,14 +41,15 @@ enum PCMBufferBridge {
 
         pcmBuffer.frameLength = AVAudioFrameCount(buffer.frameCount)
 
-        let byteCount = Int(pcmBuffer.frameLength) * buffer.bytesPerFrame
-        guard byteCount <= buffer.data.count else {
+        let (byteCount, byteCountOverflow) = Int(pcmBuffer.frameLength).multipliedReportingOverflow(by: buffer.bytesPerFrame)
+        guard !byteCountOverflow, byteCount >= 0, byteCount <= buffer.data.count, byteCount <= UInt32.max else {
             throw MoonlightError(.unsupportedOperation, message: "PCM buffer data is shorter than declared frame count")
         }
 
-        let expectedBytesPerFrame = max(buffer.channelCount, 1) * MemoryLayout<Int16>.size
+        let (expectedBytesPerFrame, channelCountOverflow) = max(buffer.channelCount, 1).multipliedReportingOverflow(by: MemoryLayout<Int16>.size)
         guard format.commonFormat == .pcmFormatInt16,
               format.isInterleaved,
+              !channelCountOverflow,
               buffer.bytesPerFrame == expectedBytesPerFrame
         else {
             throw MoonlightError(.unsupportedOperation, message: "Unsupported PCM layout for playback bridge")
@@ -85,6 +89,7 @@ public actor SystemAudioSink: AudioSink {
     private let playerNode: AVAudioPlayerNode
     private var preparedFormat: AVAudioFormat?
     private var queuedFrameCount = 0
+    private var playbackID = UUID()
 
     public init() {
         self.engine = AVAudioEngine()
@@ -100,8 +105,6 @@ public actor SystemAudioSink: AudioSink {
 
         engine.disconnectNodeOutput(playerNode)
         engine.connect(playerNode, to: engine.mainMixerNode, format: avFormat)
-        preparedFormat = avFormat
-        queuedFrameCount = 0
         engine.prepare()
 
         if !engine.isRunning {
@@ -110,33 +113,41 @@ public actor SystemAudioSink: AudioSink {
         if !playerNode.isPlaying {
             playerNode.play()
         }
+        preparedFormat = avFormat
+        queuedFrameCount = 0
+        playbackID = UUID()
     }
 
-    public func play(_ buffer: PCMBuffer) async {
+    public func play(_ buffer: PCMBuffer) async -> AudioPlaybackResult {
         do {
             if preparedFormat == nil {
                 try await prepare(format: .init(sampleRate: buffer.sampleRate, channelCount: buffer.channelCount))
             }
             guard let preparedFormat else {
-                return
+                return .dropped
             }
 
-            let queuedDuration = Double(queuedFrameCount) / Double(max(buffer.sampleRate, 1))
-            if queuedDuration > Self.maxQueuedDurationSeconds {
-                return
+            guard buffer.sampleRate > 0, buffer.frameCount > 0 else {
+                return .dropped
+            }
+            let maxQueuedFrames = Int(Double(buffer.sampleRate) * Self.maxQueuedDurationSeconds)
+            if buffer.frameCount > maxQueuedFrames || queuedFrameCount > maxQueuedFrames - buffer.frameCount {
+                return .dropped
             }
 
             let pcmBuffer = try PCMBufferBridge.makeAVAudioPCMBuffer(from: buffer, format: preparedFormat)
             let scheduledFrameCount = Int(pcmBuffer.frameLength)
             queuedFrameCount += scheduledFrameCount
+            let scheduledPlaybackID = playbackID
 
-            playerNode.scheduleBuffer(pcmBuffer, completionCallbackType: .dataConsumed) { [weak self] _ in
+            playerNode.scheduleBuffer(pcmBuffer, completionCallbackType: .dataRendered) { [weak self] _ in
                 Task {
-                    await self?.consumeQueuedFrames(scheduledFrameCount)
+                    await self?.consumeQueuedFrames(scheduledFrameCount, playbackID: scheduledPlaybackID)
                 }
             }
+            return .accepted
         } catch {
-            return
+            return .dropped
         }
     }
 
@@ -145,9 +156,11 @@ public actor SystemAudioSink: AudioSink {
         engine.stop()
         preparedFormat = nil
         queuedFrameCount = 0
+        playbackID = UUID()
     }
 
-    private func consumeQueuedFrames(_ frameCount: Int) {
+    private func consumeQueuedFrames(_ frameCount: Int, playbackID: UUID) {
+        guard playbackID == self.playbackID else { return }
         queuedFrameCount = max(0, queuedFrameCount - frameCount)
     }
 }

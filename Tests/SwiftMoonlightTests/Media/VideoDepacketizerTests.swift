@@ -2,6 +2,17 @@ import CoreGraphics
 import Foundation
 import Testing
 @testable import SwiftMoonlight
+
+@Test
+func videoReorderWindowStaysWithinSequenceRange() {
+    var zero = VideoDepacketizerConfiguration(codec: .h264, dimensions: CGSize(width: 640, height: 360), reorderWindowSize: 0)
+    let huge = VideoDepacketizerConfiguration(codec: .h264, dimensions: CGSize(width: 640, height: 360), reorderWindowSize: Int.max)
+
+    #expect(zero.reorderWindowSize == 1)
+    #expect(huge.reorderWindowSize == 32_767)
+    zero.reorderWindowSize = Int.max
+    #expect(zero.reorderWindowSize == 32_767)
+}
 #if canImport(Darwin)
 import Darwin
 #elseif canImport(Glibc)

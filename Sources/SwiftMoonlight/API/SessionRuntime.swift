@@ -104,7 +104,7 @@ public actor SessionRuntime {
     private var requestedDecoderPrimingIDR = false
     private var lastIDRRequestTime: Date?
     private static let idrRequestCooldown: TimeInterval = 1.0
-    private static let videoMetricsPublishInterval: TimeInterval = 0.1
+    private static let mediaMetricsPublishInterval: TimeInterval = 0.1
 
     public init(
         session: MoonlightSession,
@@ -219,7 +219,7 @@ public actor SessionRuntime {
                 let recoverableDecodeFailureCount = videoSnapshot.recoverableDecodeFailureCount
                 let now = Date()
                 let shouldPublishMetrics = frame == nil || lastMetricsPublishTime.map {
-                    now.timeIntervalSince($0) >= Self.videoMetricsPublishInterval
+                    now.timeIntervalSince($0) >= Self.mediaMetricsPublishInterval
                 } ?? true
                 if discontinuityCount > observation.videoDiscontinuityEvents {
                     if let controlService {
@@ -270,6 +270,10 @@ public actor SessionRuntime {
                         renderedVideoFrames: pipelineStats.renderedVideoFrames,
                         averageVideoDecodeLatencyMs: pipelineStats.averageVideoDecodeLatencyMs,
                         maxVideoDecodeLatencyMs: pipelineStats.maxVideoDecodeLatencyMs,
+                        averageVideoQueueLatencyMs: pipelineStats.averageVideoQueueLatencyMs,
+                        maxVideoQueueLatencyMs: pipelineStats.maxVideoQueueLatencyMs,
+                        averageVideoRenderSubmissionLatencyMs: pipelineStats.averageVideoRenderSubmissionLatencyMs,
+                        maxVideoRenderSubmissionLatencyMs: pipelineStats.maxVideoRenderSubmissionLatencyMs,
                         averageHostProcessingLatencyMs: pipelineStats.averageHostProcessingLatencyMs,
                         maxHostProcessingLatencyMs: pipelineStats.maxHostProcessingLatencyMs
                     )
@@ -294,39 +298,47 @@ public actor SessionRuntime {
     }
 
     private func runAudioLoop(service: AudioIngestService) async {
+        var lastMetricsPublishTime: Date?
         while !Task.isCancelled {
             do {
                 let packet = try await service.receiveNextPacket()
+                let now = Date()
+                let shouldPublishMetrics = packet == nil || lastMetricsPublishTime.map {
+                    now.timeIntervalSince($0) >= Self.mediaMetricsPublishInterval
+                } ?? true
+                if shouldPublishMetrics {
+                    lastMetricsPublishTime = now
+                    let observedCount = await service.snapshotObservedPacketCount()
+                    let concealmentCount = await service.snapshotConcealedPacketCount()
+                    let missingCount = await service.snapshotMissingPacketCount()
+                    let reorderedCount = await service.snapshotReorderedPacketCount()
+                    let pipelineStats = await session.mediaPipelineHandle().snapshot()
+                    observation.audioPacketsObserved = observedCount
+                    observation.audioConcealmentPackets = concealmentCount
+                    observation.missingAudioPackets = missingCount
+                    observation.reorderedAudioPackets = reorderedCount
+                    if let controlService {
+                        await refreshControlTransportMetrics(from: controlService)
+                    }
+                    await session.updateRuntimeMetrics(
+                        controlRoundTripTimeMs: observation.controlRoundTripTimeMs,
+                        controlRoundTripTimeVarianceMs: observation.controlRoundTripTimeVarianceMs,
+                        controlPacketLossRatio: observation.controlPacketLossRatio,
+                        controlPacketLossVarianceRatio: observation.controlPacketLossVarianceRatio,
+                        audioPacketsObserved: observedCount,
+                        audioConcealmentPackets: concealmentCount,
+                        missingAudioPackets: missingCount,
+                        reorderedAudioPackets: reorderedCount,
+                        decodedAudioBuffers: pipelineStats.decodedAudioBuffers,
+                        playedAudioBuffers: pipelineStats.playedAudioBuffers,
+                        averageAudioDecodeLatencyMs: pipelineStats.averageAudioDecodeLatencyMs,
+                        maxAudioDecodeLatencyMs: pipelineStats.maxAudioDecodeLatencyMs,
+                        audioUnderrunEvents: pipelineStats.audioUnderrunEvents
+                    )
+                }
                 if packet == nil {
                     break
                 }
-                let observedCount = await service.snapshotObservedPacketCount()
-                let concealmentCount = await service.snapshotConcealedPacketCount()
-                let missingCount = await service.snapshotMissingPacketCount()
-                let reorderedCount = await service.snapshotReorderedPacketCount()
-                let pipelineStats = await session.mediaPipelineHandle().snapshot()
-                observation.audioPacketsObserved = observedCount
-                observation.audioConcealmentPackets = concealmentCount
-                observation.missingAudioPackets = missingCount
-                observation.reorderedAudioPackets = reorderedCount
-                if let controlService {
-                    await refreshControlTransportMetrics(from: controlService)
-                }
-                await session.updateRuntimeMetrics(
-                    controlRoundTripTimeMs: observation.controlRoundTripTimeMs,
-                    controlRoundTripTimeVarianceMs: observation.controlRoundTripTimeVarianceMs,
-                    controlPacketLossRatio: observation.controlPacketLossRatio,
-                    controlPacketLossVarianceRatio: observation.controlPacketLossVarianceRatio,
-                    audioPacketsObserved: observedCount,
-                    audioConcealmentPackets: concealmentCount,
-                    missingAudioPackets: missingCount,
-                    reorderedAudioPackets: reorderedCount,
-                    decodedAudioBuffers: pipelineStats.decodedAudioBuffers,
-                    playedAudioBuffers: pipelineStats.playedAudioBuffers,
-                    averageAudioDecodeLatencyMs: pipelineStats.averageAudioDecodeLatencyMs,
-                    maxAudioDecodeLatencyMs: pipelineStats.maxAudioDecodeLatencyMs,
-                    audioUnderrunEvents: pipelineStats.audioUnderrunEvents
-                )
             } catch {
                 let recovered = await handleRuntimeError(error)
                 if !recovered {

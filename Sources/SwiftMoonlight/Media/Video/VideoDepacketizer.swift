@@ -4,7 +4,9 @@ public struct VideoDepacketizerConfiguration: Sendable, Equatable {
     public var codec: VideoCodec
     public var dimensions: CGSize
     public var frameHeaderSize: Int
-    public var reorderWindowSize: Int
+    public var reorderWindowSize: Int {
+        didSet { reorderWindowSize = min(max(reorderWindowSize, 1), 32_767) }
+    }
 
     public init(
         codec: VideoCodec,
@@ -15,7 +17,7 @@ public struct VideoDepacketizerConfiguration: Sendable, Equatable {
         self.codec = codec
         self.dimensions = dimensions
         self.frameHeaderSize = frameHeaderSize
-        self.reorderWindowSize = reorderWindowSize
+        self.reorderWindowSize = min(max(reorderWindowSize, 1), 32_767)
     }
 }
 

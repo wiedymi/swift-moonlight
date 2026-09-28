@@ -144,11 +144,11 @@ public enum ProductionClientFactory {
         host: MoonlightHost,
         configuration: StreamConfiguration,
         identity: ClientIdentity
-    ) -> LaunchQueryOptions {
+    ) throws -> LaunchQueryOptions {
         _ = configuration
         _ = identity
 
-        let keyData = (try? SystemRandomByteGenerator().generate(count: 16)) ?? Data(repeating: 0, count: 16)
+        let keyData = try SystemRandomByteGenerator().generate(count: 16)
         let keyID = UInt32.random(in: 1...UInt32.max)
         return LaunchQueryOptions(
             remoteInputKeyHex: keyData.hexString,

@@ -93,12 +93,19 @@ public actor SessionRuntime {
 - played audio buffers
 - average video decode latency
 - max video decode latency
+- average and max time from completed video frame to pipeline start
+- average and max time spent submitting a decoded frame to the renderer
 - average host processing latency
 - max host processing latency
 - average audio decode latency
 - max audio decode latency
 - audio underrun events
 - unexpected disconnect flag
+
+The video queue time includes pipeline backpressure. Render submission time
+includes a renderer's wait for a Metal drawable and command submission. It does
+not measure when a frame becomes visible. The audio loop publishes metrics at
+most every 100 ms during a stream and once more when its packet source ends.
 
 Socket-backed runtime helpers are also available for negotiated UDP channels:
 

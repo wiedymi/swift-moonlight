@@ -69,6 +69,7 @@ Current implemented behavior:
 - only treats a packet as RTP video when the header looks like RTP v2, uses no CSRC entries, and the payload type is one of the observed Sunshine/Moonlight values (`0` or `96`), to avoid misclassifying bare Apollo/Sunshine video datagrams whose first byte happens to resemble RTP
 - derives FEC shard index, data-shard count, and multi-block FEC indexes from the NVIDIA video header
 - supports bounded packet reordering before a frame is completed
+- the reorder window is limited to 1...32767 packets, within half of the 16-bit sequence space
 - buffers out-of-order packets until the frame start and missing gaps arrive
 - drops stale packets that fall behind the next expected RTP sequence number instead of treating them as forward gaps
 - supports single-packet and multi-packet frame reconstruction

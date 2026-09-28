@@ -206,8 +206,13 @@ public protocol AudioDecoder: Sendable {
 
 public protocol AudioSink: Sendable {
     func prepare(format: AudioFormat) async throws
-    func play(_ buffer: PCMBuffer) async
+    func play(_ buffer: PCMBuffer) async -> AudioPlaybackResult
     func teardown() async
+}
+
+public enum AudioPlaybackResult: Sendable {
+    case accepted
+    case dropped
 }
 
 public struct MediaPipelineStats: Sendable, Equatable {
@@ -217,6 +222,10 @@ public struct MediaPipelineStats: Sendable, Equatable {
     public var playedAudioBuffers: Int
     public var averageVideoDecodeLatencyMs: Double?
     public var maxVideoDecodeLatencyMs: Double?
+    public var averageVideoQueueLatencyMs: Double?
+    public var maxVideoQueueLatencyMs: Double?
+    public var averageVideoRenderSubmissionLatencyMs: Double?
+    public var maxVideoRenderSubmissionLatencyMs: Double?
     public var averageHostProcessingLatencyMs: Double?
     public var maxHostProcessingLatencyMs: Double?
     public var averageAudioDecodeLatencyMs: Double?
@@ -230,6 +239,10 @@ public struct MediaPipelineStats: Sendable, Equatable {
         playedAudioBuffers: Int = 0,
         averageVideoDecodeLatencyMs: Double? = nil,
         maxVideoDecodeLatencyMs: Double? = nil,
+        averageVideoQueueLatencyMs: Double? = nil,
+        maxVideoQueueLatencyMs: Double? = nil,
+        averageVideoRenderSubmissionLatencyMs: Double? = nil,
+        maxVideoRenderSubmissionLatencyMs: Double? = nil,
         averageHostProcessingLatencyMs: Double? = nil,
         maxHostProcessingLatencyMs: Double? = nil,
         averageAudioDecodeLatencyMs: Double? = nil,
@@ -242,6 +255,10 @@ public struct MediaPipelineStats: Sendable, Equatable {
         self.playedAudioBuffers = playedAudioBuffers
         self.averageVideoDecodeLatencyMs = averageVideoDecodeLatencyMs
         self.maxVideoDecodeLatencyMs = maxVideoDecodeLatencyMs
+        self.averageVideoQueueLatencyMs = averageVideoQueueLatencyMs
+        self.maxVideoQueueLatencyMs = maxVideoQueueLatencyMs
+        self.averageVideoRenderSubmissionLatencyMs = averageVideoRenderSubmissionLatencyMs
+        self.maxVideoRenderSubmissionLatencyMs = maxVideoRenderSubmissionLatencyMs
         self.averageHostProcessingLatencyMs = averageHostProcessingLatencyMs
         self.maxHostProcessingLatencyMs = maxHostProcessingLatencyMs
         self.averageAudioDecodeLatencyMs = averageAudioDecodeLatencyMs

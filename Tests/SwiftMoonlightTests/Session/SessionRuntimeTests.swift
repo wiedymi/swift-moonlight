@@ -117,6 +117,106 @@ func sessionRuntimePumpsControlVideoAndAudio() async throws {
     await runtime.stop()
 }
 
+private struct SlowRenderer: FrameRenderer {
+    func prepare(format: VideoFormat) async throws {}
+    func render(_ frame: DecodedVideoFrame) async {
+        try? await Task.sleep(for: .milliseconds(15))
+    }
+    func teardown() async {}
+}
+
+@Test
+func videoMetricsShowQueueWaitAndSlowRenderSubmission() async throws {
+    let pipeline = MediaPipeline()
+    let decodedFrame = DecodedVideoFrame(
+        timestamp: 1,
+        dimensions: CGSize(width: 640, height: 360),
+        bytes: Data([0x01])
+    )
+    try await pipeline.attachVideoDecoder(RecordingVideoDecoder(decodeOutputs: Array(repeating: [decodedFrame], count: 4)))
+    try await pipeline.attachRenderer(SlowRenderer())
+    try await pipeline.configureVideo(format: .init(codec: .hevc, dimensions: CGSize(width: 640, height: 360)))
+
+    let packets = (1...4).map { index in
+        makeRuntimeVideoPacket(
+            sequenceNumber: UInt16(index),
+            timestamp: UInt32(index * 3_000),
+            streamPacketIndex: 1,
+            frameIndex: UInt32(index),
+            flags: VideoPacketHeader.startOfFrameFlag | VideoPacketHeader.endOfFrameFlag,
+            payload: Data(repeating: 0, count: 8) + Data([0x99])
+        )
+    }
+    let service = VideoIngestService(
+        source: FixtureMediaPacketSource(packets: packets),
+        depacketizer: SimpleVideoDepacketizer(configuration: .init(codec: .hevc, dimensions: CGSize(width: 640, height: 360))),
+        pipeline: pipeline,
+        pipelineSubmissionMode: .asynchronous(maxInFlightFrames: 4)
+    )
+
+    while try await service.receiveNextFrame() != nil {}
+
+    let stats = await pipeline.snapshot()
+    #expect(stats.decodedVideoFrames == 4)
+    #expect(stats.renderedVideoFrames == 4)
+    #expect((stats.maxVideoQueueLatencyMs ?? 0) >= 10)
+    #expect((stats.averageVideoRenderSubmissionLatencyMs ?? 0) >= 10)
+}
+
+@Test
+func audioMetricsPublishLessOftenThanPacketsAndKeepFinalCounts() async throws {
+    let session = MoonlightSession()
+    let buffer = PCMBuffer(
+        sampleRate: 48_000,
+        channelCount: 2,
+        frameCount: 1,
+        bytesPerFrame: 4,
+        data: Data(repeating: 0, count: 4)
+    )
+    try await session.attachAudioDecoder(RecordingAudioDecoder(outputs: Array(repeating: buffer, count: 32)))
+    try await session.attachAudioSink(NullAudioSink())
+    try await session.configureAudio(format: .init(sampleRate: 48_000, channelCount: 2))
+
+    let packets = (1...32).map { index in
+        makeRuntimeAudioPacket(
+            sequenceNumber: UInt16(index),
+            timestamp: UInt32(index * 960),
+            payload: Data([0xA1])
+        )
+    }
+    let audioService = AudioIngestService(
+        source: FixtureMediaPacketSource(packets: packets),
+        pipeline: await session.mediaPipelineHandle()
+    )
+    let runtime = SessionRuntime(session: session, audioService: audioService)
+    let metrics = await session.metrics
+    let collected = Task { () -> [SessionMetricsSnapshot] in
+        var snapshots: [SessionMetricsSnapshot] = []
+        for await snapshot in metrics {
+            snapshots.append(snapshot)
+        }
+        return snapshots
+    }
+
+    await runtime.start()
+    let snapshot = await waitForRuntimeSnapshot(runtime) { $0.audioPacketsObserved == 32 }
+    #expect(snapshot.audioPacketsObserved == 32)
+    for _ in 0..<200 {
+        let current = await session.currentMetricsSnapshot()
+        if current.audioPacketsObserved == 32 && current.decodedAudioBuffers == 32 {
+            break
+        }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+    await runtime.stop()
+
+    let snapshots = await collected.value
+    let publishedAudioSnapshots = snapshots.filter { $0.audioPacketsObserved > 0 }
+    #expect(publishedAudioSnapshots.count < 32)
+    #expect(publishedAudioSnapshots.last?.audioPacketsObserved == 32)
+    #expect(publishedAudioSnapshots.last?.decodedAudioBuffers == 32)
+}
+
 @Test
 func sessionRuntimeRoutesControllerFeedbackEffects() async throws {
     let session = MoonlightSession()
@@ -360,6 +460,10 @@ func sessionMetricsReceiveRuntimeObservationCounts() async throws {
     #expect(metrics.playedAudioBuffers == 1)
     #expect(metrics.averageVideoDecodeLatencyMs != nil)
     #expect(metrics.maxVideoDecodeLatencyMs != nil)
+    #expect(metrics.averageVideoQueueLatencyMs != nil)
+    #expect(metrics.maxVideoQueueLatencyMs != nil)
+    #expect(metrics.averageVideoRenderSubmissionLatencyMs != nil)
+    #expect(metrics.maxVideoRenderSubmissionLatencyMs != nil)
     #expect(approximatelyEqual(metrics.averageHostProcessingLatencyMs, 15.3))
     #expect(approximatelyEqual(metrics.maxHostProcessingLatencyMs, 15.3))
     #expect(metrics.averageAudioDecodeLatencyMs != nil)

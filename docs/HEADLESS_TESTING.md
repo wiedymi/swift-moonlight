@@ -298,6 +298,7 @@ Minimum structured outputs:
 Current implementation note:
 - `session.metrics` now carries both session-local counters and runtime-observation counters, so most headless tests can assert through the session surface without separately polling `SessionRuntime.snapshot()`
 - `session.metrics` now also carries session-open timing, media decode latency, and audio underrun metrics from the media pipeline
+- `session.metrics` reports video pipeline queue time and render submission time; these are local timing stages, not input-to-display latency
 - `session.metrics` now also carries host-provided video processing latency metrics from Sunshine/Apollo frame headers when present
 - `session.metrics` now also carries transport missing/reorder/discontinuity counters from the media ingest layer
 - `session.metrics` now also carries bounded runtime reconnect-attempt counts from `SessionRuntime`

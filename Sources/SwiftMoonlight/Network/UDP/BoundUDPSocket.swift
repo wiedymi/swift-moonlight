@@ -1,4 +1,5 @@
 import Darwin
+import Dispatch
 import Foundation
 
 public actor BoundUDPSocket {
@@ -6,8 +7,11 @@ public actor BoundUDPSocket {
     private let remoteHost: String
     private let remotePort: UInt16
     private let remoteAddress: sockaddr_in
+    private let readSource: DispatchSourceRead
     private var isClosed = false
+    private var isReadSourceActive = false
     private var receiveBuffer = [UInt8](repeating: 0, count: 65_535)
+    private var readinessWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
 
     public init(
         remoteHost: String,
@@ -64,11 +68,25 @@ public actor BoundUDPSocket {
         remoteAddress.sin_len = UInt8(MemoryLayout<sockaddr_in>.stride)
         remoteAddress.sin_family = sa_family_t(AF_INET)
         remoteAddress.sin_port = remotePort.bigEndian
-        remoteAddress.sin_addr = try UDPSocketAddressing.resolveIPv4Address(remoteHost)
+        do {
+            remoteAddress.sin_addr = try UDPSocketAddressing.resolveIPv4Address(remoteHost)
+        } catch {
+            Darwin.close(socketFD)
+            throw error
+        }
         self.remoteAddress = remoteAddress
+        let readSource = DispatchSource.makeReadSource(fileDescriptor: socketFD)
+        self.readSource = readSource
+        readSource.setEventHandler { [weak self] in
+            Task { await self?.signalReadable() }
+        }
     }
 
     deinit {
+        readSource.cancel()
+        if !isReadSourceActive {
+            readSource.resume()
+        }
         if !isClosed {
             Darwin.close(socketFD)
         }
@@ -117,7 +135,7 @@ public actor BoundUDPSocket {
             return nil
         }
 
-        while !Task.isCancelled {
+        while !isClosed && !Task.isCancelled {
             let received = recv(socketFD, &receiveBuffer, receiveBuffer.count, 0)
             if received > 0 {
                 return Data(receiveBuffer.prefix(received))
@@ -128,9 +146,7 @@ public actor BoundUDPSocket {
 
             switch errno {
             case EWOULDBLOCK, EAGAIN:
-                // Media RTP arrives in short bursts. A 10 ms idle poll can let
-                // the socket queue grow enough to drop packets before the next read.
-                try await Task.sleep(for: .milliseconds(1))
+                await waitForReadiness()
                 continue
             case ECONNREFUSED, ECONNRESET, ENETUNREACH, EHOSTUNREACH:
                 try await Task.sleep(for: .milliseconds(50))
@@ -148,6 +164,50 @@ public actor BoundUDPSocket {
             return
         }
         isClosed = true
+        readSource.cancel()
+        if !isReadSourceActive {
+            readSource.resume()
+            isReadSourceActive = true
+        }
         Darwin.close(socketFD)
+        wakeWaiters()
+    }
+
+    private func waitForReadiness() async {
+        let id = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if isClosed || Task.isCancelled {
+                    continuation.resume()
+                } else {
+                    readinessWaiters[id] = continuation
+                    if !isReadSourceActive {
+                        isReadSourceActive = true
+                        readSource.resume()
+                    }
+                }
+            }
+        } onCancel: {
+            Task { await self.resumeWaiter(id) }
+        }
+    }
+
+    private func resumeWaiter(_ id: UUID) {
+        readinessWaiters.removeValue(forKey: id)?.resume()
+    }
+
+    private func signalReadable() {
+        guard !isClosed, isReadSourceActive else { return }
+        readSource.suspend()
+        isReadSourceActive = false
+        wakeWaiters()
+    }
+
+    private func wakeWaiters() {
+        let waiters = readinessWaiters
+        readinessWaiters.removeAll(keepingCapacity: true)
+        for waiter in waiters.values {
+            waiter.resume()
+        }
     }
 }

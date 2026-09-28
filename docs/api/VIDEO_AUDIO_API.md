@@ -96,8 +96,13 @@ public protocol AudioDecoder: Sendable {
 
 public protocol AudioSink: Sendable {
     func prepare(format: AudioFormat) async throws
-    func play(_ buffer: PCMBuffer) async
+    func play(_ buffer: PCMBuffer) async -> AudioPlaybackResult
     func teardown() async
+}
+
+public enum AudioPlaybackResult: Sendable {
+    case accepted
+    case dropped
 }
 ```
 
@@ -157,7 +162,9 @@ These sit between raw media packet sources and `MediaPipeline`.
 
 Current implementation note:
 - `ConnectedUDPSocket` and `ChannelSocketFactory` provide the current loopback-tested runtime path from negotiated channels to control, input, video, and audio sockets
+- `BoundUDPSocket` waits for read events while idle. Closing the socket wakes a waiting receive call.
 - `SystemAudioSink` is now implemented on Apple platforms via `AVAudioEngine` and `AVAudioPlayerNode`, scheduling interleaved PCM16 buffers with bounded queued audio to match Moonlight's reference audio renderer contract more closely
+- `AudioPlaybackResult.accepted` means the sink accepted a buffer. It does not mean sound reached the speakers. `playedAudioBuffers` counts accepted buffers. `SystemAudioSink` reports `.dropped` if the queue is full or playback setup fails.
 - `VideoPacketDecryptor` and `AudioPacketDecryptor` implement the current encrypted-media ingress path using the Sunshine-compatible packet layouts documented in `docs/binary/VIDEO_PACKET_HEADERS.md` and `docs/binary/AUDIO_PACKET_HEADERS.md`
 - `SessionRuntimeFactory` now auto-wires those decryptors when the negotiated session enables video or audio encryption
 - `UDPChannelPacketSource` now emits periodic Sunshine-compatible media ping packets when the negotiated channel descriptor carries `pingPayload`
