@@ -28,6 +28,24 @@ private actor RecordingMetalTarget: MetalFrameTarget {
 }
 
 @Test
+func metalDisplayPresenterKeepsNewestDecodedFrame() throws {
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue(),
+          let vertices = device.makeBuffer(length: 16, options: []) else { return }
+    let presenter = MetalDisplayPresenter(
+        commandQueue: queue, vertexBuffer: vertices, contentMode: .stretch, preferredFrameRate: 120
+    )
+    let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
+        pixelFormat: .bgra8Unorm, width: 1, height: 1, mipmapped: false
+    )
+    guard let texture = device.makeTexture(descriptor: textureDescriptor) else { return }
+    presenter.enqueue(MetalPresentedFrame(timestamp: 1, dimensions: CGSize(width: 1, height: 1), textures: .rgb(texture)))
+    presenter.enqueue(MetalPresentedFrame(timestamp: 2, dimensions: CGSize(width: 1, height: 1), textures: .rgb(texture)))
+    #expect(presenter.takePendingFrame().frame?.timestamp == 2)
+    #expect(presenter.takePendingFrame().frame == nil)
+}
+
+@Test
 func metalRendererPresentsRGBPixelBufferFrames() async throws {
     guard let device = MTLCreateSystemDefaultDevice() else {
         return

@@ -10,7 +10,7 @@ Stages:
 - access-unit reconstruction
 - decode submission
 - decoded frame delivery
-- render submission
+- renderer handoff
 
 ## Video Types
 
@@ -61,7 +61,10 @@ Rules:
 - hardware-first selection should be implemented as decoder composition, not ad hoc app logic
 
 Apple Metal presentation:
-- `MetalPresentationConfiguration(contentMode:dynamicRangeMode:edrCapabilities:)` controls how decoded frames are mapped into the `CAMetalLayer`
+- `MetalPresentationConfiguration(contentMode:dynamicRangeMode:edrCapabilities:preferredFrameRate:)` controls how decoded frames are mapped into the `CAMetalLayer`
+- `MetalLayerTarget` receives decoded frames without waiting for a drawable. A `CAMetalDisplayLink` callback submits the newest decoded frame to its drawable. Older decoded frames can be replaced; encoded frames still decode in order.
+- Render submission latency ends when the renderer accepts a decoded frame. It does not include the later display callback, GPU work, or screen presentation.
+- On iOS, `preferredFrameRate` supplies the stream rate to the display link, limited to the current screen maximum. The system can select a different display rate.
 - `.stretch` is the default and fills the whole layer; use it when input is normalized against the whole surface or the stream is relaunched to match the local surface size
 - `.aspectFit` preserves frame aspect with letterboxing or pillarboxing
 - `.aspectFill` preserves frame aspect while cropping overflow

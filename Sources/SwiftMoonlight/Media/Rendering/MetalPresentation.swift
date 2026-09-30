@@ -41,15 +41,18 @@ public struct MetalPresentationConfiguration: Sendable, Equatable {
     public var contentMode: MetalPresentationContentMode
     public var dynamicRangeMode: MetalPresentationDynamicRangeMode
     public var edrCapabilities: MetalPresentationEDRCapabilities?
+    public var preferredFrameRate: Int?
 
     public init(
         contentMode: MetalPresentationContentMode = .stretch,
         dynamicRangeMode: MetalPresentationDynamicRangeMode = .automatic,
-        edrCapabilities: MetalPresentationEDRCapabilities? = nil
+        edrCapabilities: MetalPresentationEDRCapabilities? = nil,
+        preferredFrameRate: Int? = nil
     ) {
         self.contentMode = contentMode
         self.dynamicRangeMode = dynamicRangeMode
         self.edrCapabilities = edrCapabilities
+        self.preferredFrameRate = preferredFrameRate
     }
 }
 

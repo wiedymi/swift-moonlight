@@ -3,6 +3,9 @@ import CoreGraphics
 import Foundation
 import Metal
 import QuartzCore
+#if os(iOS)
+import UIKit
+#endif
 
 public actor MetalLayerTarget: MetalFrameTarget {
     private let device: MTLDevice
@@ -14,6 +17,7 @@ public actor MetalLayerTarget: MetalFrameTarget {
     private var activeDynamicRangeMode: MetalResolvedPresentationDynamicRangeMode
     private var rgbPipelineState: MTLRenderPipelineState
     private var biPlanarPipelineState: MTLRenderPipelineState
+    private let displayPresenter: MetalDisplayPresenter
 
     public init(
         device: MTLDevice,
@@ -68,6 +72,12 @@ public actor MetalLayerTarget: MetalFrameTarget {
                 pixelFormat: activeDynamicRangeMode.drawablePixelFormat
             )
         )
+        self.displayPresenter = MetalDisplayPresenter(
+            commandQueue: commandQueue,
+            vertexBuffer: vertexBuffer,
+            contentMode: presentationConfiguration.contentMode,
+            preferredFrameRate: presentationConfiguration.preferredFrameRate
+        )
     }
 
     public func prepare(format: VideoFormat) async throws {
@@ -85,70 +95,21 @@ public actor MetalLayerTarget: MetalFrameTarget {
             let height = max(Int(format.dimensions.height.rounded(.up)), 1)
             layer.drawableSize = CGSize(width: width, height: height)
         }
+        displayPresenter.configure(
+            rgbPipelineState: rgbPipelineState,
+            biPlanarPipelineState: biPlanarPipelineState,
+            dynamicRangeMode: activeDynamicRangeMode
+        )
+        await displayPresenter.start(layer: SendableMetalLayerReference(layer: layer))
     }
 
     public func present(_ frame: MetalPresentedFrame) async {
-        autoreleasepool {
-            guard let drawable = layer.nextDrawable(),
-                  let commandBuffer = commandQueue.makeCommandBuffer() else {
-                return
-            }
-
-            // Keep the CoreVideo-backed textures alive until the GPU finishes
-            // sampling from them. Releasing the wrapper objects immediately
-            // after commit can produce visible corruption on screen.
-            commandBuffer.addCompletedHandler { [frame] _ in
-                _ = frame
-            }
-
-            let passDescriptor = MTLRenderPassDescriptor()
-            passDescriptor.colorAttachments[0].texture = drawable.texture
-            passDescriptor.colorAttachments[0].loadAction = .clear
-            passDescriptor.colorAttachments[0].storeAction = .store
-            passDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
-
-            guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor) else {
-                return
-            }
-
-            let transform = MetalPresentationTransform.make(
-                contentMode: presentationConfiguration.contentMode,
-                frameDimensions: frame.dimensions,
-                drawableSize: CGSize(width: drawable.texture.width, height: drawable.texture.height)
-            )
-            var presentation = MetalPresentationUniform(scale: transform.scale)
-            encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-            encoder.setVertexBytes(
-                &presentation,
-                length: MemoryLayout<MetalPresentationUniform>.stride,
-                index: 1
-            )
-            switch frame.textures {
-            case .rgb(let texture):
-                encoder.setRenderPipelineState(rgbPipelineState)
-                encoder.setFragmentTexture(texture, index: 0)
-            case .biPlanar(let luma, let chroma):
-                encoder.setRenderPipelineState(biPlanarPipelineState)
-                encoder.setFragmentTexture(luma, index: 0)
-                encoder.setFragmentTexture(chroma, index: 1)
-                var conversion = frame.colorConversion.makeShaderUniform(
-                    outputEncoding: activeDynamicRangeMode.colorOutputEncoding
-                )
-                encoder.setFragmentBytes(
-                    &conversion,
-                    length: MemoryLayout<MetalColorConversionUniform>.stride,
-                    index: 0
-                )
-            }
-            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-            encoder.endEncoding()
-
-            commandBuffer.present(drawable)
-            commandBuffer.commit()
-        }
+        displayPresenter.enqueue(frame)
     }
 
-    public func teardown() async {}
+    public func teardown() async {
+        await displayPresenter.stop()
+    }
 
     private func configureLayerDynamicRange() {
         let wantsEDR = activeDynamicRangeMode == .extendedDynamicRange
@@ -192,6 +153,130 @@ public actor MetalLayerTarget: MetalFrameTarget {
         descriptor.vertexFunction = library.makeFunction(name: "vertexMain")
         descriptor.fragmentFunction = library.makeFunction(name: fragmentFunction)
         return descriptor
+    }
+}
+
+// The display callback and decoder run on different executors. The lock only
+// transfers the latest decoded frame and immutable pipeline state snapshots.
+final class MetalDisplayPresenter: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sendable {
+    struct RenderState {
+        let rgbPipelineState: MTLRenderPipelineState
+        let biPlanarPipelineState: MTLRenderPipelineState
+        let dynamicRangeMode: MetalResolvedPresentationDynamicRangeMode
+    }
+
+    private let lock = NSLock()
+    private let commandQueue: MTLCommandQueue
+    private let vertexBuffer: MTLBuffer
+    private let contentMode: MetalPresentationContentMode
+    private let preferredFrameRate: Int?
+    private var pendingFrame: MetalPresentedFrame?
+    private var renderState: RenderState?
+    @MainActor private var displayLink: CAMetalDisplayLink?
+
+    init(commandQueue: MTLCommandQueue, vertexBuffer: MTLBuffer,
+         contentMode: MetalPresentationContentMode, preferredFrameRate: Int?) {
+        self.commandQueue = commandQueue
+        self.vertexBuffer = vertexBuffer
+        self.contentMode = contentMode
+        self.preferredFrameRate = preferredFrameRate
+    }
+
+    func configure(
+        rgbPipelineState: MTLRenderPipelineState,
+        biPlanarPipelineState: MTLRenderPipelineState,
+        dynamicRangeMode: MetalResolvedPresentationDynamicRangeMode
+    ) {
+        lock.lock()
+        renderState = RenderState(
+            rgbPipelineState: rgbPipelineState,
+            biPlanarPipelineState: biPlanarPipelineState,
+            dynamicRangeMode: dynamicRangeMode
+        )
+        pendingFrame = nil
+        lock.unlock()
+    }
+
+    func enqueue(_ frame: MetalPresentedFrame) {
+        lock.lock()
+        pendingFrame = frame
+        lock.unlock()
+    }
+
+    func takePendingFrame() -> (frame: MetalPresentedFrame?, state: RenderState?) {
+        lock.lock()
+        defer { lock.unlock() }
+        let frame = pendingFrame
+        pendingFrame = nil
+        return (frame, renderState)
+    }
+
+    @MainActor func start(layer: SendableMetalLayerReference) {
+        guard displayLink == nil else { return }
+        let link = CAMetalDisplayLink(metalLayer: layer.layer)
+        #if os(iOS)
+        let screen = (layer.layer.delegate as? UIView)?.window?.windowScene?.screen ?? UIScreen.main
+        let maximum = max(screen.maximumFramesPerSecond, 1)
+        let preferred = min(max(preferredFrameRate ?? maximum, 1), maximum)
+        link.preferredFrameRateRange = CAFrameRateRange(
+            minimum: Float(min(preferred, 30)), maximum: Float(maximum), preferred: Float(preferred)
+        )
+        #endif
+        link.delegate = self
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+    }
+
+    @MainActor func stop() {
+        displayLink?.invalidate()
+        displayLink = nil
+        lock.lock()
+        pendingFrame = nil
+        lock.unlock()
+    }
+
+    func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {
+        let pending = takePendingFrame()
+
+        guard let frame = pending.frame, let state = pending.state,
+              let commandBuffer = commandQueue.makeCommandBuffer() else { return }
+        autoreleasepool {
+            let drawable = update.drawable
+            let passDescriptor = MTLRenderPassDescriptor()
+            passDescriptor.colorAttachments[0].texture = drawable.texture
+            passDescriptor.colorAttachments[0].loadAction = .clear
+            passDescriptor.colorAttachments[0].storeAction = .store
+            passDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+            guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor) else { return }
+
+            let transform = MetalPresentationTransform.make(
+                contentMode: contentMode,
+                frameDimensions: frame.dimensions,
+                drawableSize: CGSize(width: drawable.texture.width, height: drawable.texture.height)
+            )
+            var presentation = MetalPresentationUniform(scale: transform.scale)
+            encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
+            encoder.setVertexBytes(&presentation, length: MemoryLayout<MetalPresentationUniform>.stride, index: 1)
+            switch frame.textures {
+            case .rgb(let texture):
+                encoder.setRenderPipelineState(state.rgbPipelineState)
+                encoder.setFragmentTexture(texture, index: 0)
+            case .biPlanar(let luma, let chroma):
+                encoder.setRenderPipelineState(state.biPlanarPipelineState)
+                encoder.setFragmentTexture(luma, index: 0)
+                encoder.setFragmentTexture(chroma, index: 1)
+                var conversion = frame.colorConversion.makeShaderUniform(
+                    outputEncoding: state.dynamicRangeMode.colorOutputEncoding
+                )
+                encoder.setFragmentBytes(&conversion, length: MemoryLayout<MetalColorConversionUniform>.stride, index: 0)
+            }
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+            encoder.endEncoding()
+            // The pixel buffer and CoreVideo textures must live until sampling ends.
+            commandBuffer.addCompletedHandler { [frame] _ in _ = frame }
+            commandBuffer.commit()
+            drawable.present()
+        }
     }
 }
 
