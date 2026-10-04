@@ -50,7 +50,9 @@ enum PCMBufferBridge {
         guard format.commonFormat == .pcmFormatInt16,
               format.isInterleaved,
               !channelCountOverflow,
-              buffer.bytesPerFrame == expectedBytesPerFrame
+              buffer.bytesPerFrame == expectedBytesPerFrame,
+              buffer.channelCount == Int(format.channelCount),
+              Double(buffer.sampleRate) == format.sampleRate
         else {
             throw MoonlightError(.unsupportedOperation, message: "Unsupported PCM layout for playback bridge")
         }
@@ -83,20 +85,28 @@ enum PCMBufferBridge {
 }
 
 public actor SystemAudioSink: AudioSink {
-    private static let maxQueuedDurationSeconds = 0.04
+    private static let startDurationSeconds = 0.02
+    private static let maxQueuedDurationSeconds = 0.12
 
     private let engine: AVAudioEngine
     private let playerNode: AVAudioPlayerNode
     private var preparedFormat: AVAudioFormat?
-    private var queuedFrameCount = 0
-    private var playbackID = UUID()
+    // The player sample clock measures consumed audio without delayed actor callbacks.
+    private var scheduledEndFrame: AVAudioFramePosition = 0
 
     public init() {
         self.engine = AVAudioEngine()
         self.playerNode = AVAudioPlayerNode()
     }
 
+    init(engine: AVAudioEngine, playerNode: AVAudioPlayerNode) {
+        self.engine = engine
+        self.playerNode = playerNode
+    }
+
     public func prepare(format: AudioFormat) async throws {
+        playerNode.stop()
+        scheduledEndFrame = 0
         let avFormat = try PCMBufferBridge.makeAVAudioFormat(from: format)
 
         if !engine.attachedNodes.contains(playerNode) {
@@ -110,12 +120,7 @@ public actor SystemAudioSink: AudioSink {
         if !engine.isRunning {
             try engine.start()
         }
-        if !playerNode.isPlaying {
-            playerNode.play()
-        }
         preparedFormat = avFormat
-        queuedFrameCount = 0
-        playbackID = UUID()
     }
 
     public func play(_ buffer: PCMBuffer) async -> AudioPlaybackResult {
@@ -130,20 +135,32 @@ public actor SystemAudioSink: AudioSink {
             guard buffer.sampleRate > 0, buffer.frameCount > 0 else {
                 return .dropped
             }
-            let maxQueuedFrames = Int(Double(buffer.sampleRate) * Self.maxQueuedDurationSeconds)
-            if buffer.frameCount > maxQueuedFrames || queuedFrameCount > maxQueuedFrames - buffer.frameCount {
+            guard buffer.sampleRate == Int(preparedFormat.sampleRate),
+                  buffer.channelCount == Int(preparedFormat.channelCount) else { return .dropped }
+            let maxQueuedFrames = AVAudioFramePosition(preparedFormat.sampleRate * Self.maxQueuedDurationSeconds)
+            let startFrames = AVAudioFramePosition(preparedFormat.sampleRate * Self.startDurationSeconds)
+            let renderedFrame = playerNode.lastRenderTime.flatMap {
+                playerNode.isPlaying && ($0.isSampleTimeValid || $0.isHostTimeValid)
+                    ? playerNode.playerTime(forNodeTime: $0) : nil
+            }.map { max(0, $0.sampleTime) } ?? 0
+            var queuedFrames = max(0, scheduledEndFrame - renderedFrame)
+            if playerNode.isPlaying, queuedFrames == 0 {
+                // A true gap needs the same small buffer as the initial start.
+                playerNode.stop()
+                scheduledEndFrame = 0
+                queuedFrames = 0
+            }
+            let frames = AVAudioFramePosition(buffer.frameCount)
+            let (endFrame, overflow) = scheduledEndFrame.addingReportingOverflow(frames)
+            guard !overflow, frames <= maxQueuedFrames, queuedFrames <= maxQueuedFrames - frames else {
                 return .dropped
             }
 
             let pcmBuffer = try PCMBufferBridge.makeAVAudioPCMBuffer(from: buffer, format: preparedFormat)
-            let scheduledFrameCount = Int(pcmBuffer.frameLength)
-            queuedFrameCount += scheduledFrameCount
-            let scheduledPlaybackID = playbackID
-
-            playerNode.scheduleBuffer(pcmBuffer, completionCallbackType: .dataRendered) { [weak self] _ in
-                Task {
-                    await self?.consumeQueuedFrames(scheduledFrameCount, playbackID: scheduledPlaybackID)
-                }
+            playerNode.scheduleBuffer(pcmBuffer, completionHandler: nil)
+            scheduledEndFrame = endFrame
+            if !playerNode.isPlaying, queuedFrames + frames >= startFrames {
+                playerNode.play()
             }
             return .accepted
         } catch {
@@ -155,13 +172,8 @@ public actor SystemAudioSink: AudioSink {
         playerNode.stop()
         engine.stop()
         preparedFormat = nil
-        queuedFrameCount = 0
-        playbackID = UUID()
+        scheduledEndFrame = 0
     }
 
-    private func consumeQueuedFrames(_ frameCount: Int, playbackID: UUID) {
-        guard playbackID == self.playbackID else { return }
-        queuedFrameCount = max(0, queuedFrameCount - frameCount)
-    }
 }
 #endif

@@ -223,3 +223,11 @@ packet contents.
 Native decoding is not a claim of hardware acceleration or lower CPU use.
 Runtime support is checked when AudioToolbox creates and configures the converter.
 There is no bundled software fallback.
+
+### Audio playback timing
+
+`SystemAudioSink` collects 20 ms before starting playback and after an empty queue.
+It derives queued frames from the player sample clock, without asynchronous buffer
+completion tasks. The queue accepts up to 120 ms, including valid long Opus packets
+and short recovered bursts. This adds about 20 ms at start; device latency is separate.
+PCM sample rate and channel count must match the prepared format before bytes are copied.
