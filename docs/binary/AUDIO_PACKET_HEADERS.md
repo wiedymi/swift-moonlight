@@ -56,3 +56,20 @@ The current Swift implementation decrypts to:
 
 `AudioPacketParser` then parses the RTP fields and hands the payload to the
 audio depacketizer and decoder.
+
+## Native Decoder Setup
+
+Apple AudioToolbox receives the raw decrypted Opus payload, without RTP bytes or
+an Ogg container. An OpusHead magic cookie uses the layout in
+[RFC 7845 section 5.1](https://www.rfc-editor.org/rfc/rfc7845#section-5.1):
+version 1, negotiated channel count, zero pre-skip, little-endian input sample
+rate, zero gain, mapping family 1, stream count, coupled stream count, and the
+negotiated channel mapping. Zero `AudioConverterPrimeInfo` prevents initial
+sample trimming. Tests verify that custom Moonlight surround mappings are
+preserved in PCM output.
+
+The first stream's TOC gives packet duration, as specified by
+[RFC 6716 section 3](https://www.rfc-editor.org/rfc/rfc6716#section-3). Frame count
+must be positive and no greater than 120 ms. A zero-byte packet description with
+a valid frame count requests native lost-packet recovery. These AudioToolbox
+behaviors are verified by the checked-in synthetic packet and PCM fixtures.

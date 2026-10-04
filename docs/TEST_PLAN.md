@@ -38,7 +38,9 @@ Pass conditions:
 ## Platform Builds
 
 - Build the `SwiftMoonlight` library for visionOS device and simulator.
-- Confirm the checked-in Opus XCFramework has both visionOS libraries.
+- Confirm native AudioToolbox Opus decoding compiles for each Apple target.
+- Check stereo, 5.1, and 7.1 fixtures at 5 ms and 20 ms, lost-packet recovery,
+  channel mapping, first-packet duration, and invalid configuration handling.
 - Run the headless Swift test suite on macOS after platform changes.
 - Test streaming, audio, and physical controllers in a visionOS app on a device
   before claiming runtime support. A platform build alone does not prove these

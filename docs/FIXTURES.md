@@ -142,3 +142,24 @@ Every fixture must document:
 - capture date
 - whether it is raw, redacted, or synthesized
 - linked note in `docs/OBSERVED_BEHAVIORS.md` when behavior is undocumented
+
+## Native Opus Fixtures
+
+`Tests/SwiftMoonlightTests/Fixtures/opus*` contains synthetic audio created on
+2026-10-05 with the former checked-in libopus 1.6.1 build, before its removal.
+No live host data is included. Each set has three raw multistream packets and a
+little-endian signed 16-bit PCM reference containing their output followed by
+one lost-packet recovery block.
+
+Sets cover stereo, 5.1, and 7.1 at 48 kHz, with 960-sample (20 ms) and
+240-sample (5 ms, `opus_short_*`) packets. Each input channel is a 10,000-amplitude
+sine at `200 + channelIndex * 100` Hz, with continuous phase across the three
+packets. The encoder uses `OPUS_APPLICATION_RESTRICTED_LOWDELAY`, default encoder
+settings, identity channel mapping, and stream/coupled counts 1/1, 4/2, or 5/3.
+Reference decoding uses output mappings `[0, 1]`, `[0, 4, 1, 5, 2, 3]`, or
+`[0, 6, 1, 7, 2, 3, 4, 5]`. The last block passes a null input to the reference
+decoder, with the same frame length as the preceding packets.
+
+The tests need no external encoder. They allow a maximum difference of 16 signed
+PCM units for codec rounding, while checking every output sample and channel.
+They also check that a new packet can be decoded after a loss.

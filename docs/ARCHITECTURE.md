@@ -38,8 +38,8 @@ target groups settings, its model, and views. Tests use topic folders under
 `Tests/SwiftMoonlightTests/`.
 
 The library builds for visionOS with the shared client, network, video, audio,
-Metal, and GameController code. The checked-in Opus XCFramework includes
-visionOS device and simulator libraries. A visionOS app owns its window or
+Metal, and GameController code. Opus decoding uses Apple AudioToolbox on all
+Apple targets, without a bundled codec library. A visionOS app owns its window or
 spatial presentation surface and passes a `CAMetalLayer` to the library when
 it uses the Metal renderer.
 

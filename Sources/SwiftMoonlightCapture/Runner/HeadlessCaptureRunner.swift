@@ -89,7 +89,7 @@ struct HeadlessCaptureRunner {
         } else {
             attachedRenderer = renderer
         }
-#if canImport(COpus)
+#if canImport(AudioToolbox)
         let audioDecoder: any AudioDecoder = configuration.traceAudio
             ? InspectingAudioDecoder(wrapped: OpusDecoder())
             : OpusDecoder()

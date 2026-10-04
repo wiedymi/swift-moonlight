@@ -45,7 +45,7 @@ Current implemented behavior:
 - forwards packets into `MediaPipeline`
 - exposes missing-packet, reordered-packet, and concealment counters for runtime metrics
 - can participate in bounded runtime retry when `SessionRuntime` is configured with reconnect attempts
-- the current `OpusDecoder` emits signed 16-bit interleaved PCM buffers sized from the negotiated Opus `samplesPerFrame`
+- the current `OpusDecoder` uses Apple AudioToolbox and emits signed 16-bit interleaved PCM buffers sized from each packet's Opus TOC; lost packets use the last decoded duration, or negotiated `samplesPerFrame` before the first packet
 - UDP audio channel startup sends the same host-provided ping payload format as the video channel. For Sunshine/Apollo-style 20-byte ping payloads, bytes `16..<20` carry a monotonically increasing big-endian sequence number.
 - if the negotiated audio channel does not provide a ping payload, the channel probe falls back to the legacy ASCII `PING` datagram
 

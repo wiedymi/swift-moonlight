@@ -32,10 +32,6 @@ let package = Package(
         ),
     ],
     targets: [
-        .binaryTarget(
-            name: "COpus",
-            path: "Vendor/COpus.xcframework"
-        ),
         .target(
             name: "CENet",
             path: "Vendor/ENet",
@@ -43,7 +39,7 @@ let package = Package(
         ),
         .target(
             name: "SwiftMoonlight",
-            dependencies: ["COpus", "CENet"]
+            dependencies: ["CENet"]
         ),
         .target(
             name: "SwiftMoonlightTestAppSupport",

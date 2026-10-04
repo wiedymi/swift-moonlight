@@ -181,7 +181,7 @@ Or generate and open the Xcode project:
 
 - `refs/` contains upstream reference repositories as git submodules for behavioral study only.
 - This repository is a clean-room Swift implementation under MIT. Do not copy, paste, or mechanically port GPL reference code.
-- Opus is bundled as `Vendor/COpus.xcframework` and can be rebuilt with `./scripts/build-opus-xcframework.sh`.
+- Opus decoding uses Apple AudioToolbox. No Opus binary dependency is bundled.
 - ENet is vendored under `Vendor/ENet`.
 
 ## License

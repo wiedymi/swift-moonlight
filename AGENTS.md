@@ -19,7 +19,7 @@ Instructions for agents working in this repository.
 - Use references to understand protocol behavior, interoperability quirks, and missing details.
 - When behavior comes from references instead of public docs, record it in `docs/OBSERVED_BEHAVIORS.md` and, when Apollo-specific, also in `docs/APOLLO_COMPATIBILITY.md`.
 - Preserve a clean-room implementation style. Prefer describing behavior in plain English first, then implement idiomatic Swift.
-- Keep third-party Apple dependencies reproducible inside the repo. For Opus, use the checked-in XCFramework rebuilt by `scripts/build-opus-xcframework.sh`, not a machine-local package manager.
+- Keep third-party Apple dependencies reproducible inside the repo. Use Apple AudioToolbox for Opus decoding; do not add a machine-local Opus dependency.
 
 ## Source Of Truth
 
@@ -106,7 +106,7 @@ When adding transport runtime code:
 - If implementation is blocked by missing binary details or fixtures, add the doc stub or inventory entry first instead of guessing in code.
 - Do not present temporary internal packet layouts as final protocol work. Be explicit about what is real, what is partial, and what still needs replacement with Moonlight-compatible behavior.
 - When moving from scaffold code to real protocol code, replace the temporary path decisively instead of layering more fake abstractions on top.
-- When upgrading Opus, update the rebuild script and regenerate `Vendor/COpus.xcframework` instead of switching back to `pkg-config`.
+- Keep native Opus packet, channel mapping, and lost-packet checks current when changing the audio decoder.
 
 ## First Implementation Order
 

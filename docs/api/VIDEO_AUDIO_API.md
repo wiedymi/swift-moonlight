@@ -111,7 +111,7 @@ public enum AudioPlaybackResult: Sendable {
 ```
 
 Production implementations:
-- `OpusDecoder`
+- `OpusDecoder` (Apple AudioToolbox, no bundled libopus)
 - `SystemAudioSink`
 
 Test implementations:
@@ -194,3 +194,32 @@ Apps that know the active display can pass `MetalPresentationEDRCapabilities(scr
 - software decode must be selectable as a fallback, not the first path
 - apps should never need to coordinate decode and render manually
 - Apple-specific helpers should keep `CAMetalLayer` ownership at the render boundary instead of leaking it through session core
+
+## Native Opus Decoder
+
+`OpusDecoder` keeps the same public actor API and signed 16-bit interleaved PCM
+output. One actor owns an `AudioConverter` and its negotiated configuration.
+Configuration is replaced only after converter creation, cookie setup, and
+priming setup succeed.
+
+The decoder supplies one raw Opus multistream packet per synchronous input
+callback. The packet bytes and packet description have stable owned storage,
+retained until the next input callback, converter reset, or converter disposal.
+Returning from `AudioConverterFillComplexBuffer` does not end this lifetime.
+The OpusHead cookie carries channel count, streams, coupled streams,
+and the negotiated output mapping. Converter priming is zero so the first live
+packet retains its full duration. Packet length follows the first stream's Opus
+TOC, up to 120 ms. The most recent successful packet duration becomes the duration
+used for later lost-packet recovery; before any valid packet, the negotiated
+`samplesPerFrame` is used.
+
+Empty payloads and explicit concealment packets supply one zero-byte compressed
+packet with a frame count. This invokes the native decoder's lost-packet recovery;
+it is not an end-of-stream signal. If the callback is called again during the same
+decode call, it returns a temporary input-exhausted status. Decoder errors discard
+partial converter state. Error messages contain status and frame counts, never
+packet contents.
+
+Native decoding is not a claim of hardware acceleration or lower CPU use.
+Runtime support is checked when AudioToolbox creates and configures the converter.
+There is no bundled software fallback.
