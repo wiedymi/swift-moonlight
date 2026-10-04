@@ -14,7 +14,8 @@ struct ReedSolomonFEC: Sendable {
     init(dataShardCount: Int, parityShardCount: Int) throws {
         guard dataShardCount > 0,
               parityShardCount > 0,
-              dataShardCount + parityShardCount <= 255
+              dataShardCount <= 254,
+              parityShardCount <= 255 - dataShardCount
         else {
             throw ReedSolomonFECError.invalidShardCounts
         }
@@ -87,13 +88,12 @@ struct ReedSolomonFEC: Sendable {
                 throw ReedSolomonFECError.invalidShardSet
             }
 
-            var row = missingDataIndexes.map {
+            let row = missingDataIndexes.map {
                 parityCoefficient(parityIndex: parityIndex, dataIndex: $0)
             }
             var value = Array(parityShard)
             for dataIndex in 0..<dataShardCount {
-                guard !missingDataIndexes.contains(dataIndex),
-                      let shard = recovered[dataIndex]
+                guard let shard = recovered[dataIndex]
                 else {
                     continue
                 }
@@ -103,7 +103,6 @@ struct ReedSolomonFEC: Sendable {
 
             matrix.append(row)
             rhs.append(value)
-            row.removeAll(keepingCapacity: true)
         }
 
         let solved = try solve(matrix: matrix, rhs: rhs, shardSize: shardSize)
@@ -170,37 +169,56 @@ struct ReedSolomonFEC: Sendable {
     }
 
     private func xorMultiply(source: [UInt8], coefficient: UInt8, into destination: inout [UInt8]) {
-        guard coefficient != 0 else {
-            return
-        }
-
-        if coefficient == 1 {
-            for index in source.indices {
-                destination[index] ^= source[index]
+        precondition(source.count == destination.count)
+        guard coefficient != 0, !source.isEmpty else { return }
+        source.withUnsafeBufferPointer { sourceBuffer in
+            destination.withUnsafeMutableBufferPointer { destinationBuffer in
+                // Equal buffer lengths are checked above. Every index is below source.count.
+                let sourceBytes = sourceBuffer.baseAddress!
+                let destinationBytes = destinationBuffer.baseAddress!
+                if coefficient == 1 {
+                    for index in 0..<sourceBuffer.count { destinationBytes[index] ^= sourceBytes[index] }
+                } else {
+                    ReedSolomonGF256.products.withUnsafeBufferPointer { table in
+                        let products = table.baseAddress!
+                        let row = Int(coefficient) * 256
+                        for index in 0..<sourceBuffer.count {
+                            // coefficient and source bytes are UInt8: lookup stays within 0...65535.
+                            destinationBytes[index] ^= products[row + Int(sourceBytes[index])]
+                        }
+                    }
+                }
             }
-            return
-        }
-
-        for index in source.indices {
-            destination[index] ^= ReedSolomonGF256.multiply(source[index], coefficient)
         }
     }
 
     private func multiply(row: inout [UInt8], by coefficient: UInt8) {
-        guard coefficient != 1 else {
-            return
-        }
-
-        for index in row.indices {
-            row[index] = ReedSolomonGF256.multiply(row[index], coefficient)
+        guard coefficient != 1, !row.isEmpty else { return }
+        row.withUnsafeMutableBufferPointer { buffer in
+            ReedSolomonGF256.products.withUnsafeBufferPointer { table in
+                let bytes = buffer.baseAddress!
+                let products = table.baseAddress!
+                let offset = Int(coefficient) * 256
+                for index in 0..<buffer.count { bytes[index] = products[offset + Int(bytes[index])] }
+            }
         }
     }
+
 }
 
-private enum ReedSolomonGF256 {
+enum ReedSolomonGF256 {
     private static let primitivePolynomial: UInt16 = 0x11D
 
+    // Immutable, shared table: 256 rows × 256 byte values = 64 KB.
+    static let products: [UInt8] = (0..<256).flatMap { lhs in
+        (0..<256).map { rhs in polynomialProduct(UInt8(lhs), UInt8(rhs)) }
+    }
+
     static func multiply(_ lhs: UInt8, _ rhs: UInt8) -> UInt8 {
+        products[Int(lhs) * 256 + Int(rhs)]
+    }
+
+    private static func polynomialProduct(_ lhs: UInt8, _ rhs: UInt8) -> UInt8 {
         guard lhs != 0, rhs != 0 else {
             return 0
         }

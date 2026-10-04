@@ -169,3 +169,11 @@ Current golden coverage:
 - `sessionRuntimeSendsFrameFECStatusOnVideoDiscontinuity()`
 - `videoIngestServiceFeedsPipeline()`
 - `runtimeSnapshotIncludesReorderAndDiscontinuityCounts()`
+
+### Recovery CPU cost
+
+The Reed-Solomon byte arithmetic uses one immutable 64 KB product table for
+GF(256) with polynomial 0x11D. Recovery and parity equations are unchanged.
+Byte loops access equal-length buffers after checking their lengths. Lookup
+indices are bounded by two UInt8 values. Recovery tests compare all 65,536
+products with polynomial arithmetic and cover large, empty, and missing shards.
