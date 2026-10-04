@@ -69,3 +69,11 @@ Pass conditions:
 - missing keyframe recovery
 - audio jitter / underrun handling
 - transport disconnect during session
+
+## Metal presentation checks
+
+- GPU readback verifies that a fitted picture cannot repeat its top or left edges into empty space.
+- SDR and EDR textures run through MetalFX spatial scaling without GPU errors.
+- A restart transition retains the newest decoded frame and ignores old-stream frames until the next prepare.
+- Mac and iOS Simulator app builds check device and standard-scaling paths.
+- Live resize appearance and stream latency require later device review.

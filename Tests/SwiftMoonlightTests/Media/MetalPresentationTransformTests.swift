@@ -16,13 +16,13 @@ func metalPresentationTransformStretchesByDefault() {
     expectScale(transform, x: 1, y: 1)
 }
 
-@Test
+@Test @MainActor
 func metalLayerTargetPreparesStandardDynamicRangeLayerByDefault() async throws {
     guard let device = MTLCreateSystemDefaultDevice() else {
         return
     }
 
-    let layerReference = SendableMetalLayerReference(layer: CAMetalLayer())
+    let layerReference = MetalLayerReference(layer: CAMetalLayer())
     let target = try MetalLayerTarget(device: device, layerReference: layerReference)
 
     try await target.prepare(format: VideoFormat(codec: .hevc, dimensions: CGSize(width: 1_920, height: 1_080)))
@@ -34,13 +34,13 @@ func metalLayerTargetPreparesStandardDynamicRangeLayerByDefault() async throws {
     #endif
 }
 
-@Test
+@Test @MainActor
 func metalLayerTargetPreparesExtendedDynamicRangeLayerByDefaultForHDR() async throws {
     guard let device = MTLCreateSystemDefaultDevice() else {
         return
     }
 
-    let layerReference = SendableMetalLayerReference(layer: CAMetalLayer())
+    let layerReference = MetalLayerReference(layer: CAMetalLayer())
     let target = try MetalLayerTarget(device: device, layerReference: layerReference)
 
     try await target.prepare(
@@ -58,13 +58,13 @@ func metalLayerTargetPreparesExtendedDynamicRangeLayerByDefaultForHDR() async th
     #endif
 }
 
-@Test
+@Test @MainActor
 func metalLayerTargetPreparesExtendedDynamicRangeLayerWhenRequested() async throws {
     guard let device = MTLCreateSystemDefaultDevice() else {
         return
     }
 
-    let layerReference = SendableMetalLayerReference(layer: CAMetalLayer())
+    let layerReference = MetalLayerReference(layer: CAMetalLayer())
     let target = try MetalLayerTarget(
         device: device,
         layerReference: layerReference,
@@ -86,13 +86,13 @@ func metalLayerTargetPreparesExtendedDynamicRangeLayerWhenRequested() async thro
     #endif
 }
 
-@Test
+@Test @MainActor
 func metalLayerTargetKeepsSDRWhenExplicitlyRequestedForHDR() async throws {
     guard let device = MTLCreateSystemDefaultDevice() else {
         return
     }
 
-    let layerReference = SendableMetalLayerReference(layer: CAMetalLayer())
+    let layerReference = MetalLayerReference(layer: CAMetalLayer())
     let target = try MetalLayerTarget(
         device: device,
         layerReference: layerReference,
@@ -114,13 +114,13 @@ func metalLayerTargetKeepsSDRWhenExplicitlyRequestedForHDR() async throws {
     #endif
 }
 
-@Test
+@Test @MainActor
 func metalLayerTargetAutomaticDynamicRangeStaysSDRWhenCapabilitiesDenyEDR() async throws {
     guard let device = MTLCreateSystemDefaultDevice() else {
         return
     }
 
-    let layerReference = SendableMetalLayerReference(layer: CAMetalLayer())
+    let layerReference = MetalLayerReference(layer: CAMetalLayer())
     let target = try MetalLayerTarget(
         device: device,
         layerReference: layerReference,
@@ -145,13 +145,13 @@ func metalLayerTargetAutomaticDynamicRangeStaysSDRWhenCapabilitiesDenyEDR() asyn
     #endif
 }
 
-@Test
+@Test @MainActor
 func metalLayerTargetAutomaticDynamicRangeUsesEDRForHDRWhenCapabilitiesAllow() async throws {
     guard let device = MTLCreateSystemDefaultDevice() else {
         return
     }
 
-    let layerReference = SendableMetalLayerReference(layer: CAMetalLayer())
+    let layerReference = MetalLayerReference(layer: CAMetalLayer())
     let target = try MetalLayerTarget(
         device: device,
         layerReference: layerReference,
@@ -308,4 +308,29 @@ private func expectPoint(_ point: CGPoint, x: CGFloat, y: CGFloat) {
     #expect(abs(point.x - x) < 0.0001)
     #expect(abs(point.y - y) < 0.0001)
 }
+#endif
+
+#if canImport(Metal) && canImport(QuartzCore)
+@Test
+func metalBackgroundIgnoresCodecRoundingBorders() {
+    let size = CGSize(width: 5120, height: 2160)
+    let reduced = MetalPresentationGeometry(contentMode: .aspectFit,
+        frameDimensions: CGSize(width: 3412, height: 1440), drawableSize: size)
+    #expect(reduced.requiresBlurredBackground == false)
+    let letterboxed = MetalPresentationGeometry(contentMode: .aspectFit,
+        frameDimensions: CGSize(width: 1920, height: 1080), drawableSize: size)
+    #expect(letterboxed.requiresBlurredBackground)
+    let filled = MetalPresentationGeometry(contentMode: .aspectFill,
+        frameDimensions: CGSize(width: 1920, height: 1080), drawableSize: size)
+    #expect(filled.requiresBlurredBackground == false)
+}
+@Test
+func metalFillScalesTheCompletePictureBeforeCropping() {
+    let geometry = MetalPresentationGeometry(contentMode: .aspectFill,
+        frameDimensions: CGSize(width: 640, height: 360), drawableSize: CGSize(width: 500, height: 500))
+    #expect(abs(geometry.pictureSize.width - 500 * 16 / 9) < 0.001)
+    #expect(geometry.pictureSize.height == 500)
+    #expect(geometry.pictureSize.width > 640)
+}
+
 #endif

@@ -31,7 +31,7 @@ public enum AppleMediaComponents {
         }
     }
 
-    public static func makeRenderer(
+    @MainActor public static func makeRenderer(
         device: any MTLDevice,
         layer: CAMetalLayer,
         presentationConfiguration: MetalPresentationConfiguration = MetalPresentationConfiguration(),
@@ -39,7 +39,7 @@ public enum AppleMediaComponents {
     ) throws -> any FrameRenderer {
         let target = try MetalLayerTarget(
             device: device,
-            layerReference: SendableMetalLayerReference(layer: layer),
+            layerReference: MetalLayerReference(layer: layer),
             presentationConfiguration: presentationConfiguration
         )
         let diagnosticsHandler: (@Sendable (MetalFrameDiagnostics) async -> Void)?
@@ -61,7 +61,7 @@ public enum AppleMediaComponents {
         SystemAudioSink()
     }
 
-    public static func attachRecommendedPlaybackComponents(
+    @MainActor public static func attachRecommendedPlaybackComponents(
         to session: MoonlightSession,
         device: any MTLDevice,
         layer: CAMetalLayer,

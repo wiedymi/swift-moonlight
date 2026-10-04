@@ -2,6 +2,7 @@
 import CoreGraphics
 import CoreVideo
 import Metal
+import QuartzCore
 import Testing
 @testable import SwiftMoonlight
 
@@ -33,7 +34,9 @@ func metalDisplayPresenterKeepsNewestDecodedFrame() throws {
           let queue = device.makeCommandQueue(),
           let vertices = device.makeBuffer(length: 16, options: []) else { return }
     let presenter = MetalDisplayPresenter(
-        commandQueue: queue, vertexBuffer: vertices, contentMode: .stretch, preferredFrameRate: 120
+        commandQueue: queue, vertexBuffer: vertices, contentMode: .stretch, preferredFrameRate: 120,
+        device: device,
+        upscalingMode: .linear, background: .black
     )
     let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
         pixelFormat: .bgra8Unorm, width: 1, height: 1, mipmapped: false
@@ -42,7 +45,29 @@ func metalDisplayPresenterKeepsNewestDecodedFrame() throws {
     presenter.enqueue(MetalPresentedFrame(timestamp: 1, dimensions: CGSize(width: 1, height: 1), textures: .rgb(texture)))
     presenter.enqueue(MetalPresentedFrame(timestamp: 2, dimensions: CGSize(width: 1, height: 1), textures: .rgb(texture)))
     #expect(presenter.takePendingFrame().frame?.timestamp == 2)
-    #expect(presenter.takePendingFrame().frame == nil)
+    let retained = presenter.takePendingFrame()
+    #expect(retained.frame?.timestamp == 2)
+    #expect(retained.fresh == false)
+    presenter.beginTransition()
+    #expect(presenter.takePendingFrame().opacity == 0)
+    // Frames from the old stream cannot end the restart transition.
+    presenter.enqueue(MetalPresentedFrame(timestamp: 3, dimensions: CGSize(width: 1, height: 1), textures: .rgb(texture)))
+    #expect(presenter.takePendingFrame().opacity == 0)
+    let library = try device.makeDefaultSwiftMoonlightLibrary()
+    let descriptor = MTLRenderPipelineDescriptor()
+    descriptor.vertexFunction = library.makeFunction(name: "vertexMain")
+    descriptor.fragmentFunction = library.makeFunction(name: "fragmentRGB")
+    descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+    let pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+    presenter.configure(rgbPipelineState: pipeline, biPlanarPipelineState: pipeline,
+        presentationPipelineState: pipeline, dynamicRangeMode: .standardDynamicRange)
+    #expect(presenter.takePendingFrame().opacity == 0)
+    presenter.enqueue(MetalPresentedFrame(timestamp: 4, dimensions: CGSize(width: 1, height: 1), textures: .rgb(texture)))
+    #expect(presenter.takePendingFrame().frame?.timestamp == 4)
+    #expect(presenter.takePendingFrame(at: CACurrentMediaTime() + 1).opacity == 1)
+    presenter.beginTransition()
+    presenter.endTransition()
+    #expect(presenter.takePendingFrame(at: CACurrentMediaTime() + 1).opacity == 1)
 }
 
 @Test

@@ -4,11 +4,11 @@ import Foundation
 import Metal
 import QuartzCore
 
-/// Safety invariant:
-/// - Ownership of the layer is transferred to `MetalLayerTarget` for rendering.
-/// - The caller must not concurrently mutate the layer after passing it in.
-struct SendableMetalLayerReference: @unchecked Sendable {
+/// Layer access stays on the main actor, including view resize and display-link setup.
+@MainActor final class MetalLayerReference {
     let layer: CAMetalLayer
+
+    init(layer: CAMetalLayer) { self.layer = layer }
 }
 
 public enum MetalPresentationContentMode: Sendable, Equatable {
@@ -37,8 +37,37 @@ public struct MetalPresentationEDRCapabilities: Sendable, Equatable {
     }
 }
 
+public enum MetalPresentationUpscalingMode: String, Sendable, Equatable {
+    case linear
+    case metalFXSpatial
+}
+
+public enum MetalPresentationScalingStatus: Sendable, Equatable {
+    case standard
+    case metalFXSpatial
+    case notNeeded
+    case fallback
+    case transition
+}
+
+/// Describes the last frame submitted to the GPU, not completed screen presentation.
+public struct MetalPresentationDiagnostics: Sendable, Equatable {
+    public let scalingStatus: MetalPresentationScalingStatus
+    public let sourceSize: CGSize
+    public let pictureSize: CGSize
+    public let drawableSize: CGSize
+    public let dynamicRangeMode: MetalPresentationDynamicRangeMode
+}
+
+public enum MetalPresentationBackground: Sendable, Equatable {
+    case black
+    case blurred
+}
+
 public struct MetalPresentationConfiguration: Sendable, Equatable {
     public var contentMode: MetalPresentationContentMode
+    public var upscalingMode: MetalPresentationUpscalingMode
+    public var background: MetalPresentationBackground
     public var dynamicRangeMode: MetalPresentationDynamicRangeMode
     public var edrCapabilities: MetalPresentationEDRCapabilities?
     public var preferredFrameRate: Int?
@@ -47,9 +76,13 @@ public struct MetalPresentationConfiguration: Sendable, Equatable {
         contentMode: MetalPresentationContentMode = .stretch,
         dynamicRangeMode: MetalPresentationDynamicRangeMode = .automatic,
         edrCapabilities: MetalPresentationEDRCapabilities? = nil,
-        preferredFrameRate: Int? = nil
+        preferredFrameRate: Int? = nil,
+        upscalingMode: MetalPresentationUpscalingMode = .linear,
+        background: MetalPresentationBackground = .black
     ) {
         self.contentMode = contentMode
+        self.upscalingMode = upscalingMode
+        self.background = background
         self.dynamicRangeMode = dynamicRangeMode
         self.edrCapabilities = edrCapabilities
         self.preferredFrameRate = preferredFrameRate
@@ -125,6 +158,18 @@ public struct MetalPresentationGeometry: Sendable, Equatable {
         self.drawableSize = geometry.drawableSize
         self.contentRect = geometry.contentRect
         self.sourceRect = geometry.sourceRect
+    }
+
+    // Fill scales the complete picture before cropping it to the drawable.
+    var pictureSize: CGSize {
+        guard sourceRect.width > 0, sourceRect.height > 0 else { return .zero }
+        return CGSize(width: contentRect.width / sourceRect.width,
+                      height: contentRect.height / sourceRect.height)
+    }
+
+    // Ignore codec rounding gaps under two drawable pixels on each side.
+    var requiresBlurredBackground: Bool {
+        drawableSize.width - contentRect.width >= 4 || drawableSize.height - contentRect.height >= 4
     }
 
     public func normalizedFramePoint(

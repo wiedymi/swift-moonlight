@@ -2,6 +2,9 @@
 import CoreGraphics
 import Foundation
 import Metal
+#if canImport(MetalFX)
+import MetalFX
+#endif
 import QuartzCore
 #if os(iOS)
 import UIKit
@@ -9,7 +12,7 @@ import UIKit
 
 public actor MetalLayerTarget: MetalFrameTarget {
     private let device: MTLDevice
-    private let layer: CAMetalLayer
+    private let layerReference: MetalLayerReference
     private let presentationConfiguration: MetalPresentationConfiguration
     private let commandQueue: MTLCommandQueue
     private let library: MTLLibrary
@@ -17,27 +20,28 @@ public actor MetalLayerTarget: MetalFrameTarget {
     private var activeDynamicRangeMode: MetalResolvedPresentationDynamicRangeMode
     private var rgbPipelineState: MTLRenderPipelineState
     private var biPlanarPipelineState: MTLRenderPipelineState
+    private var presentationPipelineState: MTLRenderPipelineState
     private let displayPresenter: MetalDisplayPresenter
 
-    public init(
+    @MainActor public init(
         device: MTLDevice,
         layer: CAMetalLayer,
         presentationConfiguration: MetalPresentationConfiguration = MetalPresentationConfiguration()
     ) throws {
         try self.init(
             device: device,
-            layerReference: SendableMetalLayerReference(layer: layer),
+            layerReference: MetalLayerReference(layer: layer),
             presentationConfiguration: presentationConfiguration
         )
     }
 
     internal init(
         device: MTLDevice,
-        layerReference: SendableMetalLayerReference,
+        layerReference: MetalLayerReference,
         presentationConfiguration: MetalPresentationConfiguration = MetalPresentationConfiguration()
     ) throws {
         self.device = device
-        self.layer = layerReference.layer
+        self.layerReference = layerReference
         self.presentationConfiguration = presentationConfiguration
         self.activeDynamicRangeMode = presentationConfiguration.resolvedDynamicRangeMode(for: nil)
 
@@ -72,53 +76,85 @@ public actor MetalLayerTarget: MetalFrameTarget {
                 pixelFormat: activeDynamicRangeMode.drawablePixelFormat
             )
         )
+        self.presentationPipelineState = try device.makeRenderPipelineState(
+            descriptor: Self.makePipelineDescriptor(library: library,
+                fragmentFunction: "fragmentPresentation", pixelFormat: activeDynamicRangeMode.drawablePixelFormat)
+        )
         self.displayPresenter = MetalDisplayPresenter(
             commandQueue: commandQueue,
             vertexBuffer: vertexBuffer,
             contentMode: presentationConfiguration.contentMode,
-            preferredFrameRate: presentationConfiguration.preferredFrameRate
+            preferredFrameRate: presentationConfiguration.preferredFrameRate,
+            device: device,
+            upscalingMode: presentationConfiguration.upscalingMode,
+            background: presentationConfiguration.background
         )
     }
 
     public func prepare(format: VideoFormat) async throws {
         try activateDynamicRangeMode(presentationConfiguration.resolvedDynamicRangeMode(for: format))
 
-        layer.device = device
-        layer.pixelFormat = activeDynamicRangeMode.drawablePixelFormat
-        layer.colorspace = activeDynamicRangeMode.layerColorSpace
-        layer.framebufferOnly = false
-        layer.isOpaque = true
-        configureLayerDynamicRange()
-
-        if layer.drawableSize.width <= 1 || layer.drawableSize.height <= 1 {
-            let width = max(Int(format.dimensions.width.rounded(.up)), 1)
-            let height = max(Int(format.dimensions.height.rounded(.up)), 1)
-            layer.drawableSize = CGSize(width: width, height: height)
+        let layerReference = self.layerReference
+        let device = self.device
+        let mode = activeDynamicRangeMode
+        let rgbPipelineState = self.rgbPipelineState
+        let biPlanarPipelineState = self.biPlanarPipelineState
+        let presentationPipelineState = self.presentationPipelineState
+        let displayPresenter = self.displayPresenter
+        await MainActor.run {
+            let layer = layerReference.layer
+            layer.device = device
+            layer.pixelFormat = mode.drawablePixelFormat
+            layer.colorspace = mode.layerColorSpace
+            layer.framebufferOnly = false
+            layer.isOpaque = true
+            let wantsEDR = mode == .extendedDynamicRange
+            #if os(macOS) || os(iOS)
+            layer.wantsExtendedDynamicRangeContent = wantsEDR
+            if #available(macOS 26.0, iOS 26.0, *) {
+                layer.preferredDynamicRange = wantsEDR ? .high : .standard
+            }
+            #endif
+            if layer.drawableSize.width <= 1 || layer.drawableSize.height <= 1 {
+                layer.drawableSize = CGSize(
+                    width: max(format.dimensions.width.rounded(.up), 1),
+                    height: max(format.dimensions.height.rounded(.up), 1)
+                )
+            }
+            displayPresenter.configure(
+                rgbPipelineState: rgbPipelineState,
+                biPlanarPipelineState: biPlanarPipelineState,
+                presentationPipelineState: presentationPipelineState,
+                dynamicRangeMode: mode
+            )
         }
-        displayPresenter.configure(
-            rgbPipelineState: rgbPipelineState,
-            biPlanarPipelineState: biPlanarPipelineState,
-            dynamicRangeMode: activeDynamicRangeMode
-        )
-        await displayPresenter.start(layer: SendableMetalLayerReference(layer: layer))
+        await displayPresenter.start(layer: layerReference)
+    }
+
+    public func currentPresentationDiagnostics() -> MetalPresentationDiagnostics? {
+        displayPresenter.currentDiagnostics()
+    }
+
+    public func setPreferredFrameRate(_ rate: Int) async {
+        await displayPresenter.setPreferredFrameRate(rate)
     }
 
     public func present(_ frame: MetalPresentedFrame) async {
         displayPresenter.enqueue(frame)
     }
 
-    public func teardown() async {
-        await displayPresenter.stop()
+    /// Keeps the last decoded frame blurred until prepare and the next stream frame.
+    public func beginTransition() {
+        displayPresenter.beginTransition()
     }
 
-    private func configureLayerDynamicRange() {
-        let wantsEDR = activeDynamicRangeMode == .extendedDynamicRange
-        #if os(macOS) || os(iOS)
-        layer.wantsExtendedDynamicRangeContent = wantsEDR
-        if #available(macOS 26.0, iOS 26.0, *) {
-            layer.preferredDynamicRange = wantsEDR ? .high : .standard
-        }
-        #endif
+    /// Cancels a pending restart and fades back to the current picture.
+    public func endTransition() {
+        displayPresenter.endTransition()
+    }
+
+    public func teardown() async {
+        await displayPresenter.stop()
     }
 
     private func activateDynamicRangeMode(_ mode: MetalResolvedPresentationDynamicRangeMode) throws {
@@ -139,6 +175,10 @@ public actor MetalLayerTarget: MetalFrameTarget {
                 fragmentFunction: "fragmentBiPlanar",
                 pixelFormat: mode.drawablePixelFormat
             )
+        )
+        presentationPipelineState = try device.makeRenderPipelineState(
+            descriptor: Self.makePipelineDescriptor(library: library,
+                fragmentFunction: "fragmentPresentation", pixelFormat: mode.drawablePixelFormat)
         )
         activeDynamicRangeMode = mode
     }
@@ -162,6 +202,7 @@ final class MetalDisplayPresenter: NSObject, CAMetalDisplayLinkDelegate, @unchec
     struct RenderState {
         let rgbPipelineState: MTLRenderPipelineState
         let biPlanarPipelineState: MTLRenderPipelineState
+        let presentationPipelineState: MTLRenderPipelineState
         let dynamicRangeMode: MetalResolvedPresentationDynamicRangeMode
     }
 
@@ -169,49 +210,106 @@ final class MetalDisplayPresenter: NSObject, CAMetalDisplayLinkDelegate, @unchec
     private let commandQueue: MTLCommandQueue
     private let vertexBuffer: MTLBuffer
     private let contentMode: MetalPresentationContentMode
-    private let preferredFrameRate: Int?
+    @MainActor private var preferredFrameRate: Int?
+    private let device: MTLDevice
+    private let upscalingMode: MetalPresentationUpscalingMode
+    private let background: MetalPresentationBackground
+    // Only the serial display callback uses these GPU resources.
+    private var blurredBackground: MetalBlurredBackground?
+    #if canImport(MetalFX)
+    private var spatialUpscaler: MetalSpatialUpscaler?
+    #endif
+    private var colorTexture: MTLTexture?
+    private var lastPresentationOpacity: Float?
+    private var lastDrawableSize: CGSize?
+    private var transitionStartedAt: CFTimeInterval?
     private var pendingFrame: MetalPresentedFrame?
     private var renderState: RenderState?
+    private var diagnostics: MetalPresentationDiagnostics?
+    private enum Transition {
+        case clear
+        case waitingForStream
+        case waitingForFrame
+        case fading(CFTimeInterval)
+    }
+    private var transition = Transition.clear
+    private var hasNewFrame = false
     @MainActor private var displayLink: CAMetalDisplayLink?
 
     init(commandQueue: MTLCommandQueue, vertexBuffer: MTLBuffer,
-         contentMode: MetalPresentationContentMode, preferredFrameRate: Int?) {
+         contentMode: MetalPresentationContentMode, preferredFrameRate: Int?,
+         device: MTLDevice,
+         upscalingMode: MetalPresentationUpscalingMode, background: MetalPresentationBackground) {
         self.commandQueue = commandQueue
         self.vertexBuffer = vertexBuffer
         self.contentMode = contentMode
         self.preferredFrameRate = preferredFrameRate
+        self.device = device
+        self.upscalingMode = upscalingMode
+        self.background = background
     }
 
     func configure(
         rgbPipelineState: MTLRenderPipelineState,
         biPlanarPipelineState: MTLRenderPipelineState,
+        presentationPipelineState: MTLRenderPipelineState,
         dynamicRangeMode: MetalResolvedPresentationDynamicRangeMode
     ) {
         lock.lock()
         renderState = RenderState(
             rgbPipelineState: rgbPipelineState,
             biPlanarPipelineState: biPlanarPipelineState,
+            presentationPipelineState: presentationPipelineState,
             dynamicRangeMode: dynamicRangeMode
         )
-        pendingFrame = nil
+        if case .waitingForStream = transition { transition = .waitingForFrame }
+        lock.unlock()
+    }
+
+    func currentDiagnostics() -> MetalPresentationDiagnostics? {
+        lock.lock()
+        defer { lock.unlock() }
+        return diagnostics
+    }
+
+    func beginTransition() {
+        lock.lock()
+        transition = .waitingForStream
+        lock.unlock()
+    }
+
+    func endTransition() {
+        lock.lock()
+        transition = .fading(CACurrentMediaTime())
         lock.unlock()
     }
 
     func enqueue(_ frame: MetalPresentedFrame) {
         lock.lock()
         pendingFrame = frame
+        hasNewFrame = true
+        if case .waitingForFrame = transition { transition = .fading(CACurrentMediaTime()) }
         lock.unlock()
     }
 
-    func takePendingFrame() -> (frame: MetalPresentedFrame?, state: RenderState?) {
+    func takePendingFrame(at time: CFTimeInterval = CACurrentMediaTime()) -> (frame: MetalPresentedFrame?, state: RenderState?, opacity: Float, fresh: Bool) {
         lock.lock()
         defer { lock.unlock() }
         let frame = pendingFrame
-        pendingFrame = nil
-        return (frame, renderState)
+        let fresh = hasNewFrame
+        hasNewFrame = false
+        let opacity: Float
+        switch transition {
+        case .clear: opacity = 1
+        case .waitingForStream, .waitingForFrame: opacity = 0
+        case .fading(let started):
+            opacity = Float(min(max((time - started) / 0.25, 0), 1))
+            if opacity == 1 { transition = .clear }
+        }
+        return (frame, renderState, opacity, fresh)
     }
 
-    @MainActor func start(layer: SendableMetalLayerReference) {
+    @MainActor func start(layer: MetalLayerReference) {
         guard displayLink == nil else { return }
         let link = CAMetalDisplayLink(metalLayer: layer.layer)
         #if os(iOS)
@@ -227,11 +325,24 @@ final class MetalDisplayPresenter: NSObject, CAMetalDisplayLinkDelegate, @unchec
         displayLink = link
     }
 
+    @MainActor func setPreferredFrameRate(_ rate: Int) {
+        let rate = min(max(rate, 1), 240)
+        preferredFrameRate = rate
+        #if os(iOS)
+        displayLink?.preferredFrameRateRange = CAFrameRateRange(
+            minimum: Float(min(rate, 30)), maximum: Float(rate), preferred: Float(rate)
+        )
+        #endif
+    }
+
     @MainActor func stop() {
         displayLink?.invalidate()
         displayLink = nil
         lock.lock()
         pendingFrame = nil
+        diagnostics = nil
+        transition = .clear
+        hasNewFrame = false
         lock.unlock()
     }
 
@@ -242,45 +353,159 @@ final class MetalDisplayPresenter: NSObject, CAMetalDisplayLinkDelegate, @unchec
               let commandBuffer = commandQueue.makeCommandBuffer() else { return }
         autoreleasepool {
             let drawable = update.drawable
-            let passDescriptor = MTLRenderPassDescriptor()
-            passDescriptor.colorAttachments[0].texture = drawable.texture
-            passDescriptor.colorAttachments[0].loadAction = .clear
-            passDescriptor.colorAttachments[0].storeAction = .store
-            passDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
-            guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor) else { return }
-
-            let transform = MetalPresentationTransform.make(
-                contentMode: contentMode,
-                frameDimensions: frame.dimensions,
-                drawableSize: CGSize(width: drawable.texture.width, height: drawable.texture.height)
-            )
-            var presentation = MetalPresentationUniform(scale: transform.scale)
-            encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-            encoder.setVertexBytes(&presentation, length: MemoryLayout<MetalPresentationUniform>.stride, index: 1)
-            switch frame.textures {
-            case .rgb(let texture):
-                encoder.setRenderPipelineState(state.rgbPipelineState)
-                encoder.setFragmentTexture(texture, index: 0)
-            case .biPlanar(let luma, let chroma):
-                encoder.setRenderPipelineState(state.biPlanarPipelineState)
-                encoder.setFragmentTexture(luma, index: 0)
-                encoder.setFragmentTexture(chroma, index: 1)
-                var conversion = frame.colorConversion.makeShaderUniform(
-                    outputEncoding: state.dynamicRangeMode.colorOutputEncoding
-                )
-                encoder.setFragmentBytes(&conversion, length: MemoryLayout<MetalColorConversionUniform>.stride, index: 0)
+            let size = CGSize(width: drawable.texture.width, height: drawable.texture.height)
+            let now = CACurrentMediaTime()
+            let resized = lastDrawableSize != size
+            if resized && background == .blurred {
+                transitionStartedAt = now
             }
-            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-            encoder.endEncoding()
-            // The pixel buffer and CoreVideo textures must live until sampling ends.
+            lastDrawableSize = size
+            let opacity = min(pending.opacity, Float(min(max((now - (transitionStartedAt ?? (now - 1))) / 0.25, 0), 1)))
+            guard pending.fresh || resized || opacity != lastPresentationOpacity else { return }
+            let transform = MetalPresentationTransform.make(
+                contentMode: contentMode, frameDimensions: frame.dimensions, drawableSize: size
+            )
+            let geometry = MetalPresentationGeometry(contentMode: contentMode,
+                frameDimensions: frame.dimensions, drawableSize: size)
+            let needsBackground = opacity < 1 || (background == .blurred && geometry.requiresBlurredBackground)
+            let usesEffects = needsBackground || upscalingMode == .metalFXSpatial
+            let pictureSize = geometry.pictureSize
+            var scalingStatus: MetalPresentationScalingStatus = upscalingMode == .linear ? .standard : .fallback
+            if usesEffects, let color = convertedTexture(frame: frame, state: state, commandBuffer: commandBuffer) {
+                let scaled = opacity > 0 ? upscaledTexture(color: color, frame: frame, size: size,
+                                             state: state, commandBuffer: commandBuffer) : nil
+                let output = scaled ?? color
+                if scaled != nil {
+                    scalingStatus = .metalFXSpatial
+                } else if upscalingMode == .metalFXSpatial &&
+                    (pictureSize.width < CGFloat(color.width) || pictureSize.height < CGFloat(color.height) ||
+                     (pictureSize.width == CGFloat(color.width) && pictureSize.height == CGFloat(color.height))) {
+                    scalingStatus = .notNeeded
+                }
+                var backgroundTexture: MTLTexture = color
+                if needsBackground {
+                    if blurredBackground?.matches(source: color) != true {
+                        blurredBackground = MetalBlurredBackground(device: device, source: color)
+                    }
+                    backgroundTexture = blurredBackground?.encode(source: color, frame: frame, pipeline: state.rgbPipelineState,
+                        vertices: vertexBuffer, commandBuffer: commandBuffer) ?? color
+                }
+                if let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPass(texture: drawable.texture)) {
+                    var fullScreen = MetalPresentationUniform(scale: SIMD2(1, 1))
+                    let fill = MetalPresentationTransform.make(contentMode: .aspectFill,
+                        frameDimensions: frame.dimensions, drawableSize: size)
+                    var effect = SIMD4<Float>(transform.scale.x, transform.scale.y, opacity,
+                                             needsBackground ? 1 : 0)
+                    var backgroundScale = fill.scale
+                    encoder.setRenderPipelineState(state.presentationPipelineState)
+                    encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
+                    encoder.setVertexBytes(&fullScreen, length: MemoryLayout<MetalPresentationUniform>.stride, index: 1)
+                    encoder.setFragmentTexture(output, index: 0)
+                    encoder.setFragmentTexture(backgroundTexture, index: 1)
+                    encoder.setFragmentBytes(&effect, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
+                    encoder.setFragmentBytes(&backgroundScale, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
+                    encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+                    encoder.endEncoding()
+                }
+            } else if let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPass(texture: drawable.texture)) {
+                encodeFrame(frame, state: state, encoder: encoder, scale: transform.scale)
+                encoder.endEncoding()
+            }
+            // CoreVideo frame resources must live until sampling ends.
             commandBuffer.addCompletedHandler { [frame] _ in _ = frame }
+            lock.lock()
+            diagnostics = MetalPresentationDiagnostics(
+                scalingStatus: opacity < 1 ? .transition : scalingStatus,
+                sourceSize: frame.dimensions, pictureSize: pictureSize, drawableSize: size,
+                dynamicRangeMode: state.dynamicRangeMode == .extendedDynamicRange ? .extendedDynamicRange : .standardDynamicRange
+            )
+            lock.unlock()
+            lastPresentationOpacity = opacity
+            commandBuffer.present(drawable)
             commandBuffer.commit()
-            drawable.present()
         }
     }
+
+    private func renderPass(texture: MTLTexture) -> MTLRenderPassDescriptor {
+        let descriptor = MTLRenderPassDescriptor()
+        descriptor.colorAttachments[0].texture = texture
+        descriptor.colorAttachments[0].loadAction = .clear
+        descriptor.colorAttachments[0].storeAction = .store
+        descriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+        return descriptor
+    }
+
+    private func encodeFrame(_ frame: MetalPresentedFrame, state: RenderState,
+                             encoder: MTLRenderCommandEncoder, scale: SIMD2<Float>) {
+        var presentation = MetalPresentationUniform(scale: scale)
+        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
+        encoder.setVertexBytes(&presentation, length: MemoryLayout<MetalPresentationUniform>.stride, index: 1)
+        switch frame.textures {
+        case .rgb(let texture):
+            encoder.setRenderPipelineState(state.rgbPipelineState)
+            encoder.setFragmentTexture(texture, index: 0)
+        case .biPlanar(let luma, let chroma):
+            encoder.setRenderPipelineState(state.biPlanarPipelineState)
+            encoder.setFragmentTexture(luma, index: 0)
+            encoder.setFragmentTexture(chroma, index: 1)
+            var conversion = frame.colorConversion.makeShaderUniform(outputEncoding: state.dynamicRangeMode.colorOutputEncoding)
+            encoder.setFragmentBytes(&conversion, length: MemoryLayout<MetalColorConversionUniform>.stride, index: 0)
+        }
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+    }
+
+    private func convertedTexture(frame: MetalPresentedFrame, state: RenderState,
+                                  commandBuffer: MTLCommandBuffer) -> MTLTexture? {
+        let source: MTLTexture
+        switch frame.textures {
+        case .rgb(let texture): source = texture
+        case .biPlanar(let luma, _): source = luma
+        }
+        let width = source.width
+        let height = source.height
+        guard width > 0, height > 0, width <= 16384, height <= 16384 else { return nil }
+        let format = state.dynamicRangeMode.drawablePixelFormat
+        if colorTexture?.width != width || colorTexture?.height != height || colorTexture?.pixelFormat != format {
+            let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format,
+                width: width, height: height, mipmapped: false)
+            descriptor.usage = [.renderTarget, .shaderRead]
+            descriptor.storageMode = .private
+            colorTexture = device.makeTexture(descriptor: descriptor)
+        }
+        guard let texture = colorTexture,
+              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPass(texture: texture)) else { return nil }
+        encodeFrame(frame, state: state, encoder: encoder, scale: SIMD2(1, 1))
+        encoder.endEncoding()
+        return texture
+    }
+
+    private func upscaledTexture(color: MTLTexture, frame: MetalPresentedFrame, size: CGSize,
+                                 state: RenderState, commandBuffer: MTLCommandBuffer) -> MTLTexture? {
+        #if canImport(MetalFX)
+        guard upscalingMode == .metalFXSpatial, MTLFXSpatialScalerDescriptor.supportsDevice(device) else { return nil }
+        let geometry = MetalPresentationGeometry(contentMode: contentMode, frameDimensions: frame.dimensions, drawableSize: size)
+        let pictureSize = geometry.pictureSize
+        guard pictureSize.width.isFinite, pictureSize.height.isFinite,
+              pictureSize.width > 0, pictureSize.height > 0,
+              pictureSize.width <= 16384, pictureSize.height <= 16384 else { return nil }
+        let width = Int(pictureSize.width.rounded(.up))
+        let height = Int(pictureSize.height.rounded(.up))
+        guard width >= color.width, height >= color.height,
+              width > color.width || height > color.height,
+              width <= 16384, height <= 16384 else { return nil }
+        if spatialUpscaler?.matches(input: color, width: width, height: height) != true {
+            spatialUpscaler = MetalSpatialUpscaler(device: device, input: color,
+                width: width, height: height, hdr: state.dynamicRangeMode == .extendedDynamicRange)
+        }
+        return spatialUpscaler?.encode(input: color, commandBuffer: commandBuffer)
+        #else
+        return nil
+        #endif
+    }
+
 }
 
-private extension MTLDevice {
+extension MTLDevice {
     func makeDefaultSwiftMoonlightLibrary() throws -> MTLLibrary {
         let source = """
         #include <metal_stdlib>
@@ -320,8 +545,27 @@ private extension MTLDevice {
         }
 
         fragment float4 fragmentRGB(VertexOut in [[stage_in]], texture2d<float> colorTexture [[texture(0)]]) {
-            constexpr sampler textureSampler(mag_filter::linear, min_filter::linear);
+            if (any(in.texCoord < 0.0) || any(in.texCoord > 1.0)) { discard_fragment(); }
+            constexpr sampler textureSampler(address::clamp_to_edge, mag_filter::linear, min_filter::linear);
             return colorTexture.sample(textureSampler, in.texCoord);
+        }
+
+
+        fragment float4 fragmentPresentation(
+            VertexOut in [[stage_in]], texture2d<float> picture [[texture(0)]],
+            texture2d<float> background [[texture(1)]],
+            constant float4& effect [[buffer(0)]], constant float2& backgroundScale [[buffer(1)]]
+        ) {
+            constexpr sampler s(address::clamp_to_edge, mag_filter::linear, min_filter::linear);
+            float2 uv = (in.texCoord - 0.5) / effect.xy + 0.5;
+            bool inside = all(uv >= 0.0) && all(uv <= 1.0);
+            float4 sharp = inside ? picture.sample(s, uv) : float4(0.0, 0.0, 0.0, 1.0);
+            if (effect.w == 0.0 || (inside && effect.z == 1.0)) { return sharp; }
+            float2 bgUV = (in.texCoord - 0.5) / backgroundScale + 0.5;
+            float4 blurred = background.sample(s, bgUV);
+            blurred.rgb *= mix(0.25, 0.12, smoothstep(0.0, 1.0, in.texCoord.y));
+            blurred.a = 1.0;
+            return mix(blurred, sharp, inside ? effect.z : 0.0);
         }
 
         float3 linearToSRGB(float3 linear) {
@@ -427,7 +671,8 @@ private extension MTLDevice {
             texture2d<float> chromaTexture [[texture(1)]],
             constant ColorConversionUniform& conversion [[buffer(0)]]
         ) {
-            constexpr sampler textureSampler(mag_filter::linear, min_filter::linear);
+            if (any(in.texCoord < 0.0) || any(in.texCoord > 1.0)) { discard_fragment(); }
+            constexpr sampler textureSampler(address::clamp_to_edge, mag_filter::linear, min_filter::linear);
             float y = (lumaTexture.sample(textureSampler, in.texCoord).r - conversion.offsets.x) * conversion.scales.x;
             float2 cbcr = (chromaTexture.sample(textureSampler, in.texCoord).rg - conversion.offsets.yz) * conversion.scales.yz;
             float3 ycbcr = float3(y, cbcr.x, cbcr.y);

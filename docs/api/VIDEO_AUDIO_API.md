@@ -62,7 +62,7 @@ Rules:
 
 Apple Metal presentation:
 - `MetalPresentationConfiguration(contentMode:dynamicRangeMode:edrCapabilities:preferredFrameRate:)` controls how decoded frames are mapped into the `CAMetalLayer`
-- `MetalLayerTarget` receives decoded frames without waiting for a drawable. A `CAMetalDisplayLink` callback submits the newest decoded frame to its drawable. Older decoded frames can be replaced; encoded frames still decode in order.
+- `MetalLayerTarget` receives decoded frames without waiting for a drawable. A `CAMetalDisplayLink` callback submits the newest decoded frame to its drawable. Older decoded frames can be replaced; encoded frames still decode in order. The newest frame remains available for resize redraws. An unchanged frame is not submitted again after a fade ends.
 - Render submission latency ends when the renderer accepts a decoded frame. It does not include the later display callback, GPU work, or screen presentation.
 - On iOS, `preferredFrameRate` supplies the stream rate to the display link, limited to the current screen maximum. The system can select a different display rate.
 - `.stretch` is the default and fills the whole layer; use it when input is normalized against the whole surface or the stream is relaunched to match the local surface size
@@ -75,6 +75,42 @@ Apple Metal presentation:
 - `MetalPresentationEDRCapabilities(screen:)` can be built from `NSScreen` or `UIScreen` on the main actor so app code does not need to duplicate Apple EDR headroom checks
 - `MetalPresentationGeometry` exposes the matching `contentRect`, normalized `sourceRect`, and `normalizedFramePoint(forDrawablePoint:)` mapping for absolute pointer input
 - absolute pointer mapping must use the same presentation geometry chosen by the app, otherwise host cursor coordinates can drift from the pixels shown to the user
+
+### Spatial scaling and resize presentation
+
+`MetalPresentationConfiguration.upscalingMode` defaults to `.linear`.
+`.metalFXSpatial` converts the decoded image to an RGB texture at its source
+size, then scales it to the visible picture size before presentation. SDR uses
+perceptual BGRA; EDR uses HDR RGBA16Float. Fit, fill, and stretch use the same
+geometry as standard presentation. Fill scales the complete picture before
+cropping, so a narrower drawable does not disable upscaling. Downscaling, unsupported devices, missing
+MetalFX frameworks (including iOS Simulator), or resource allocation failure
+use standard scaling. MetalFX does not change the negotiated stream size or
+bitrate and does not receive game depth or motion data.
+
+`background` defaults to `.black`. `.blurred` fills unused video space with a
+blurred, darkened copy of the frame and a vertical gradient. The blur uses a
+texture with a maximum side of 256 pixels and a Gaussian filter. This adds a
+conversion pass and small background textures; it avoids a full-size blur.
+All foreground shaders limit sampling to the picture bounds to prevent a
+scaled triangle from extending frame edges into empty space.
+
+`MetalLayerTarget.beginTransition()` holds the picture as a blurred background.
+Frames from the current stream do not end this transition. After `prepare`
+configures the next stream, its first frame starts a 250 ms fade to a clear
+picture. `endTransition()` cancels a pending adjustment and restores the
+current picture with the same fade. A drawable size change also triggers a
+short blur and fade with `.blurred` backgrounds, including when stream resolution is fixed.
+`setPreferredFrameRate(_:)` updates the iOS display-link rate when a retained
+target is reused with a different stream rate. The app must limit this rate
+to the current screen maximum.
+
+The target normally stops its display link and releases its last decoded
+frame on `teardown`. An app that preserves presentation across session
+restarts can own one target through an app-level `MetalFrameTarget` adapter:
+forward `prepare` and `present`, preserve it during session teardown, and call
+the real target's `teardown` when the stream view closes. The app must also
+stop it if initial attachment fails. This is an explicit lifetime requirement.
 
 ## Audio Pipeline
 
@@ -195,6 +231,20 @@ Apps that know the active display can pass `MetalPresentationEDRCapabilities(scr
 - apps should never need to coordinate decode and render manually
 - Apple-specific helpers should keep `CAMetalLayer` ownership at the render boundary instead of leaking it through session core
 
+`MetalLayerTarget.currentPresentationDiagnostics()` returns the last GPU
+submission's source, picture, and drawable sizes, output range, and actual
+scaling status. Status distinguishes standard scaling, MetalFX, a size that
+does not need upscaling, standard fallback, and a blur transition. These are
+submission facts; they do not measure GPU completion or screen presentation.
+
+Blur presentation ignores picture borders smaller than two drawable pixels on
+each side. These small borders stay black, avoiding a Gaussian filter for
+codec rounding differences. Larger borders and resize transitions still use
+blur. A cached blurred texture is reused while the decoded frame object stays
+the same. A weak frame reference prevents an old object address from matching
+a later frame after the old frame is released. A new frame is filtered even
+when its timestamp is unchanged.
+
 ## Native Opus Decoder
 
 `OpusDecoder` keeps the same public actor API and signed 16-bit interleaved PCM
@@ -223,6 +273,16 @@ packet contents.
 Native decoding is not a claim of hardware acceleration or lower CPU use.
 Runtime support is checked when AudioToolbox creates and configures the converter.
 There is no bundled software fallback.
+
+## Swift 6 Layer Isolation
+
+Create `MetalLayerTarget` and call `AppleMediaComponents.makeRenderer` or
+`attachRecommendedPlaybackComponents` on the main actor. The layer reference is
+main-actor isolated and needs no unchecked Sendable conformance. View resize,
+layer setup, dynamic-range properties, and display-link setup all use the main
+actor. Decode, pipeline state, and display callback work keep their existing
+owners. This isolates shared UI state without moving per-frame GPU work onto
+the main actor.
 
 ### Audio playback timing
 
