@@ -27,7 +27,12 @@ public actor AudioIngestService {
     }
 
     public func receiveNextPacket() async throws -> EncodedAudioPacket? {
-        while let packetData = try await source.receivePacket() {
+        while true {
+            if let ready = await depacketizer.drainPendingAudioPackets() {
+                try await pipeline.ingestAudio(ready)
+                return ready
+            }
+            guard let packetData = try await source.receivePacket() else { return nil }
             observedPacketCount += 1
             let rawPacket: Data
             let usedDecryptor = decryptor != nil && encryptionContext != nil
@@ -62,7 +67,6 @@ public actor AudioIngestService {
                 return encoded
             }
         }
-        return nil
     }
 
     public func snapshotObservedPacketCount() -> Int {

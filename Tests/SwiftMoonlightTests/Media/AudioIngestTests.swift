@@ -117,3 +117,58 @@ func audioIngestServiceTracksConcealmentPackets() async throws {
     #expect(await service.snapshotReorderedPacketCount() == 1)
     #expect(await service.snapshotMissingPacketCount() == 1)
 }
+
+@Test
+func audioIngestDrainsReadyReorderedPacketsWithoutAnotherDatagram() async throws {
+    let source = FixtureMediaPacketSource(packets: [
+        makeAudioPacket(sequenceNumber: 1, timestamp: 0, payload: Data([1])),
+        makeAudioPacket(sequenceNumber: 3, timestamp: 480, payload: Data([3])),
+        makeAudioPacket(sequenceNumber: 2, timestamp: 240, payload: Data([2])),
+    ])
+    let pipeline = MediaPipeline()
+    let sink = RecordingAudioSink()
+    let pcm = PCMBuffer(sampleRate: 48_000, channelCount: 2, frameCount: 240,
+                        bytesPerFrame: 4, data: Data(count: 960))
+    try await pipeline.attachAudioDecoder(RecordingAudioDecoder(outputs: [pcm, pcm, pcm]))
+    try await pipeline.attachAudioSink(sink)
+    try await pipeline.configureAudio(format: .init(sampleRate: 48_000, channelCount: 2))
+    let service = AudioIngestService(source: source, pipeline: pipeline)
+    var packets: [EncodedAudioPacket] = []
+    for _ in 0..<3 {
+        packets.append(try #require(try await service.receiveNextPacket()))
+    }
+    #expect(packets.map(\.payload) == [Data([1]), Data([2]), Data([3])])
+    #expect(packets.map(\.timestamp) == [0, 240, 480])
+    #expect(await sink.recordedBuffers().count == 3)
+    #expect(await service.snapshotObservedPacketCount() == 3)
+    #expect(try await service.receiveNextPacket() == nil)
+}
+
+@Test
+func audioIngestDrainsReadyPacketsAfterConcealmentWithoutAnotherDatagram() async throws {
+    let source = FixtureMediaPacketSource(packets: [
+        makeAudioPacket(sequenceNumber: 1, timestamp: 0, payload: Data([1])),
+        makeAudioPacket(sequenceNumber: 3, timestamp: 1920, payload: Data([3])),
+        makeAudioPacket(sequenceNumber: 4, timestamp: 2880, payload: Data([4])),
+    ])
+    let pipeline = MediaPipeline()
+    let sink = RecordingAudioSink()
+    let pcm = PCMBuffer(sampleRate: 48_000, channelCount: 2, frameCount: 960,
+                        bytesPerFrame: 4, data: Data(count: 3840))
+    try await pipeline.attachAudioDecoder(RecordingAudioDecoder(outputs: [pcm, pcm, pcm, pcm]))
+    try await pipeline.attachAudioSink(sink)
+    try await pipeline.configureAudio(format: .init(sampleRate: 48_000, channelCount: 2))
+    let service = AudioIngestService(source: source,
+                                    depacketizer: .init(reorderWindowSize: 2), pipeline: pipeline)
+    var packets: [EncodedAudioPacket] = []
+    for _ in 0..<4 {
+        packets.append(try #require(try await service.receiveNextPacket()))
+    }
+    #expect(packets.map(\.payload) == [Data([1]), Data(), Data([3]), Data([4])])
+    #expect(packets.map(\.timestamp) == [0, 960, 1920, 2880])
+    #expect(packets.map(\.isConcealment) == [false, true, false, false])
+    #expect(await sink.recordedBuffers().count == 4)
+    #expect(await service.snapshotMissingPacketCount() == 1)
+    #expect(await service.snapshotObservedPacketCount() == 3)
+    #expect(try await service.receiveNextPacket() == nil)
+}

@@ -43,6 +43,8 @@ Current implemented behavior:
 - drops stale packets that fall behind the current RTP cursor instead of counting them as forward loss
 - converts payload bytes into `EncodedAudioPacket`
 - forwards packets into `MediaPipeline`
+- drains contiguous ready audio before waiting for another UDP packet, including
+  after reordering or concealment, so buffered sound does not wait for new input
 - exposes missing-packet, reordered-packet, and concealment counters for runtime metrics
 - can participate in bounded runtime retry when `SessionRuntime` is configured with reconnect attempts
 - the current `OpusDecoder` uses Apple AudioToolbox and emits signed 16-bit interleaved PCM buffers sized from each packet's Opus TOC; lost packets use the last decoded duration, or negotiated `samplesPerFrame` before the first packet

@@ -55,7 +55,7 @@ public actor SimpleAudioDepacketizer {
         return drainPendingAudioPackets()
     }
 
-    private func drainPendingAudioPackets() -> EncodedAudioPacket? {
+    func drainPendingAudioPackets() -> EncodedAudioPacket? {
         guard let nextSequenceNumber else {
             return nil
         }
