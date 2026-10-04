@@ -25,6 +25,11 @@ separate Swift modules.
 - `Media/Audio/`, `Media/Video/`, `Media/Rendering/`, and `Media/Transport/`:
   audio and video packet handling, decoding, rendering, and shared RTP parsing.
   `MediaPipeline`, media types, crypto, and test decoders remain at `Media/`.
+  Audio separates `Transport/`, `Decoding/`, and `Playback/`. Rendering separates
+  `Frames/`, `Color/`, `Presentation/`, `Effects/`, and `Shaders/`.
+  The layer target, display callback owner, geometry, and embedded shader source
+  have separate files. Decoder pointer storage is separate from the public Opus
+  actor, and the PCM bridge is separate from playback queue management.
 - `Network/HTTP/`, `Network/UDP/`, `Network/RTSP/`, `Network/Control/`, and
   `Network/Discovery/`: live transport and discovery implementations.
 - `Protocol/Pairing/`, `Protocol/RTSP/`, `Protocol/Control/`, `Protocol/Host/`,
@@ -35,7 +40,8 @@ separate Swift modules.
 The `SwiftMoonlightCapture` target groups configuration, reports, image
 analysis, media adapters, and its runner. The macOS `SwiftMoonlightTestApp`
 target groups settings, its model, and views. Tests use topic folders under
-`Tests/SwiftMoonlightTests/`.
+`Tests/SwiftMoonlightTests/`. Media tests mirror audio, video, rendering, and
+transport groups; their shared fixtures and pipeline tests stay at `Media/`.
 
 The library builds for visionOS with the shared client, network, video, audio,
 Metal, and GameController code. Opus decoding uses Apple AudioToolbox on all
