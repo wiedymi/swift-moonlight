@@ -63,7 +63,7 @@ If code and docs conflict:
 
 ## Reference Usage
 
-- Relevant references live under `refs/`.
+- References are optional local checkouts under `refs/`; see `docs/REFERENCES.md` for links and revisions. They are not package dependencies.
 - Prefer local `refs/` sources over web lookups when the needed code or docs already exist locally.
 - Treat them as behavioral references only.
 - Do not mirror upstream file layout just because a reference repo does.

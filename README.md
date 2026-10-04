@@ -179,7 +179,7 @@ Or generate and open the Xcode project:
 
 ## Repository Notes
 
-- `refs/` contains upstream reference repositories as git submodules for behavioral study only.
+- Upstream reference sources are optional local checkouts for behavioral study only. See [reference sources](docs/REFERENCES.md) for links and recorded revisions. Package checkouts do not download them.
 - This repository is a clean-room Swift implementation under MIT. Do not copy, paste, or mechanically port GPL reference code.
 - Opus decoding uses Apple AudioToolbox. No Opus binary dependency is bundled.
 - ENet is vendored under `Vendor/ENet`.
