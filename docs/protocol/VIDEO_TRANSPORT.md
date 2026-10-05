@@ -177,3 +177,9 @@ GF(256) with polynomial 0x11D. Recovery and parity equations are unchanged.
 Byte loops access equal-length buffers after checking their lengths. Lookup
 indices are bounded by two UInt8 values. Recovery tests compare all 65,536
 products with polynomial arithmetic and cover large, empty, and missing shards.
+
+## Repair block reorder limit
+
+The configured reorder window remains the limit for packets without valid repair metadata. When the next missing packet is a data shard in an active Reed-Solomon block, the effective window also covers the remaining data and parity shards in that block. The block must contain at most 255 total shards, matching the repair codec limit. This prevents a large frame from being discarded before its repair packets arrive. The pending packet bound uses this same derived window; no extra packet history is saved.
+
+An unrecoverable block still advances when a later packet exceeds that bounded window. Sequence comparisons retain 16-bit wrap handling. Invalid block sizes cannot extend the window.

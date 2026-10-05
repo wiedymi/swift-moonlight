@@ -846,3 +846,78 @@ func depacketizerReportsInterFrameStartGapWithoutWaitingForReorderWindow() async
     #expect(await depacketizer.snapshotDiscontinuityCount() == 1)
     #expect(await depacketizer.snapshotMissingPacketCount() == 0)
 }
+
+@Test(arguments: [UInt16(1000), UInt16(65500)], [0, 1, 60])
+func depacketizerRecoversLargeFECBlockBeyondDefaultReorderWindow(base: UInt16, missingIndex: Int) async throws {
+    let count = 100
+    let percentage: UInt32 = 10
+    let parser = VideoPacketParser()
+    let packets = try (0..<count).map { index in
+        let flags = index == 0 ? VideoPacketHeader.startOfFrameFlag :
+            index == count - 1 ? VideoPacketHeader.endOfFrameFlag : VideoPacketHeader.containsPictureDataFlag
+        return try parser.parse(makeVideoPacket(
+            sequenceNumber: base &+ UInt16(index), timestamp: 6000,
+            streamPacketIndex: UInt32(index + 1), frameIndex: 80, flags: flags,
+            fecInfo: (UInt32(count) << 22) | (UInt32(index) << 12) | (percentage << 4),
+            payload: Data(repeating: UInt8(index), count: 8)
+        ))
+    }
+    let codec = try ReedSolomonFEC(dataShardCount: count, parityShardCount: 10)
+    let parity = makeVideoParityPackets(try codec.encodeParityShards(packets.map(\.fecProtectedPayload)),
+        baseSequenceNumber: base, timestamp: 6000, frameIndex: 80,
+        dataShardCount: UInt32(count), fecPercentage: percentage)
+    let depacketizer = SimpleVideoDepacketizer(configuration: .init(
+        codec: .h264, dimensions: CGSize(width: 2934, height: 1554), frameHeaderSize: 0))
+    var frame: EncodedVideoFrame?
+    for (index, packet) in packets.enumerated() where index != missingIndex {
+        frame = try await depacketizer.submit(packet) ?? frame
+    }
+    for packet in parity {
+        frame = try await depacketizer.submit(packet) ?? frame
+    }
+    #expect(frame?.payload == packets.reduce(into: Data()) { $0.append($1.payload) })
+    #expect(await depacketizer.snapshotDiscontinuityCount() == 0)
+}
+
+@Test
+func depacketizerRejectsOversizedRepairBlockWithoutExtendingWait() async throws {
+    let parser = VideoPacketParser()
+    let depacketizer = SimpleVideoDepacketizer(configuration: .init(
+        codec: .h264, dimensions: CGSize(width: 640, height: 360), frameHeaderSize: 0, reorderWindowSize: 1))
+    for index in [0, 3] {
+        _ = try await depacketizer.submit(parser.parse(makeVideoPacket(
+            sequenceNumber: UInt16(100 + index), timestamp: 1,
+            streamPacketIndex: UInt32(index), frameIndex: 1,
+            flags: index == 0 ? VideoPacketHeader.startOfFrameFlag : VideoPacketHeader.containsPictureDataFlag,
+            fecInfo: (UInt32(1000) << 22) | (UInt32(index) << 12) | (UInt32(20) << 4),
+            payload: Data([0xAA])
+        )))
+    }
+    #expect(await depacketizer.snapshotDiscontinuityCount() == 1)
+}
+
+@Test
+func depacketizerAdvancesPastUnrecoverableLargeRepairBlock() async throws {
+    let parser = VideoPacketParser()
+    let depacketizer = SimpleVideoDepacketizer(configuration: .init(
+        codec: .h264, dimensions: CGSize(width: 640, height: 360), frameHeaderSize: 0))
+    // 100 data shards plus 10 parity shards. Missing data cannot be reconstructed here.
+    for index in [0, 99, 109] {
+        _ = try await depacketizer.submit(parser.parse(makeVideoPacket(
+            sequenceNumber: UInt16(1000 + index), timestamp: 1,
+            streamPacketIndex: UInt32(index), frameIndex: 1,
+            flags: index == 0 ? VideoPacketHeader.startOfFrameFlag :
+                index == 99 ? VideoPacketHeader.endOfFrameFlag : 0,
+            fecInfo: (UInt32(100) << 22) | (UInt32(index) << 12) | (UInt32(10) << 4),
+            payload: Data([0xAA])
+        )))
+    }
+    let next = try await depacketizer.submit(parser.parse(makeVideoPacket(
+        sequenceNumber: 1110, timestamp: 2, streamPacketIndex: 0, frameIndex: 2,
+        flags: VideoPacketHeader.startOfFrameFlag | VideoPacketHeader.endOfFrameFlag,
+        payload: Data([0xBB])
+    )))
+    #expect(next?.payload == Data([0xBB]))
+    #expect(await depacketizer.snapshotDiscontinuityCount() == 1)
+    #expect(await depacketizer.drainPendingFrameFECStatuses().count == 1)
+}

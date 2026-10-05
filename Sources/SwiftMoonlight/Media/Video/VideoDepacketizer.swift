@@ -154,7 +154,7 @@ public actor SimpleVideoDepacketizer {
                     discontinuityCount += 1
                 }
                 nextSequenceNumber = packet.rtp.sequenceNumber
-            } else if gap > configuration.reorderWindowSize {
+            } else if gap > effectiveReorderWindow(for: nextSequenceNumber!) {
                 let recoveredGap = recoverPendingFECPackets(expectedSequenceNumber: nextSequenceNumber!)
                 if !recoveredGap {
                     queueFECStatusForDiscontinuity(expectedSequenceNumber: nextSequenceNumber!)
@@ -173,7 +173,8 @@ public actor SimpleVideoDepacketizer {
             }
         }
 
-        if pendingPackets.count > configuration.reorderWindowSize * 2 {
+        let reorderWindow = nextSequenceNumber.map(effectiveReorderWindow(for:)) ?? configuration.reorderWindowSize
+        if pendingPackets.count > reorderWindow * 2 {
             // Pending buffer grew too large — trim packets behind nextSequenceNumber
             if let next = nextSequenceNumber {
                 pendingPackets = pendingPackets.filter {
@@ -248,6 +249,22 @@ public actor SimpleVideoDepacketizer {
             dropCurrentFrame()
             return frame
         }
+    }
+
+    private func effectiveReorderWindow(for expectedSequenceNumber: UInt16) -> Int {
+        guard let observation = currentFECBlock else { return configuration.reorderWindowSize }
+        let dataCount = Int(observation.dataShardCount)
+        let parityCount = (dataCount * Int(observation.fecPercentage) + 99) / 100
+        let totalCount = dataCount + parityCount
+        let expectedIndex = sequenceDistanceForward(
+            from: observation.lowestSequenceNumber, to: expectedSequenceNumber
+        )
+        // Only a valid repair block can extend the configured reorder window.
+        // Its final parity packet must arrive before we decide that repair failed.
+        guard dataCount > 0, parityCount > 0, totalCount <= 255, expectedIndex < dataCount else {
+            return configuration.reorderWindowSize
+        }
+        return max(configuration.reorderWindowSize, totalCount - expectedIndex - 1)
     }
 
     private func shouldAdvanceAcrossCompletedFrameGap(to packet: VideoTransportPacket, gap: Int) -> Bool {
