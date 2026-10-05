@@ -398,9 +398,7 @@ public actor MoonlightSession: InputSending {
         metricsForwardingTask = nil
         metricsContinuation.finish()
         eventContinuation.finish()
-        Task {
-            await self.primedSockets?.close()
-            await mediaPipeline.teardown()
-        }
+        await mediaPipeline.teardown()
+        await primedSockets?.close()
     }
 }

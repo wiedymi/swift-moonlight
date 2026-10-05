@@ -121,6 +121,7 @@ public actor SessionRuntime {
     }
 
     public func start() {
+        guard !Task.isCancelled else { return }
         if let controlService {
             controlTask = Task {
                 await runControlLoop(service: controlService)

@@ -255,3 +255,65 @@ private func approximatelyEqual(_ lhs: Double?, _ rhs: Double, tolerance: Double
     }
     return abs(lhs - rhs) <= tolerance
 }
+
+private actor PausedAudioDecoder: AudioDecoder {
+    let entered: AsyncStream<Void>
+    private let signal: AsyncStream<Void>.Continuation
+    private var pending: CheckedContinuation<PCMBuffer, Never>?
+
+    init() {
+        let (stream, continuation) = AsyncStream<Void>.makeStream()
+        entered = stream
+        signal = continuation
+    }
+
+    func configure(format: AudioFormat) async throws {}
+
+    func decode(_ packet: EncodedAudioPacket) async throws -> PCMBuffer {
+        await withCheckedContinuation { continuation in
+            pending = continuation
+            signal.yield(())
+        }
+    }
+
+    func complete() {
+        pending?.resume(returning: PCMBuffer(sampleRate: 48_000, channelCount: 2,
+            frameCount: 480, bytesPerFrame: 4, data: Data(count: 1920)))
+        pending = nil
+    }
+}
+
+@Test
+func pendingAudioDecodeCannotRestartPlaybackAfterTeardown() async throws {
+    let pipeline = MediaPipeline()
+    let decoder = PausedAudioDecoder()
+    let sink = RecordingAudioSink()
+    try await pipeline.attachAudioDecoder(decoder)
+    try await pipeline.attachAudioSink(sink)
+    let entered = decoder.entered
+    let decode = Task {
+        try await pipeline.ingestAudio(.init(timestamp: 480, payload: Data([1])))
+    }
+    var iterator = entered.makeAsyncIterator()
+    await iterator.next()
+    await pipeline.teardown()
+    await decoder.complete()
+    try await decode.value
+    #expect(await sink.recordedBuffers().isEmpty)
+}
+
+private actor ShutdownAudioSink: AudioSink {
+    private(set) var stopped = false
+    func prepare(format: AudioFormat) async throws {}
+    func play(_ buffer: PCMBuffer) async -> AudioPlaybackResult { .accepted }
+    func teardown() async { stopped = true }
+}
+
+@Test
+func sessionStopWaitsForAudioTeardown() async throws {
+    let session = MoonlightSession()
+    let sink = ShutdownAudioSink()
+    try await session.attachAudioSink(sink)
+    await session.stop()
+    #expect(await sink.stopped)
+}

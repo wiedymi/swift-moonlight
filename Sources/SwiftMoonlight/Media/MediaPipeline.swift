@@ -144,8 +144,15 @@ public actor MediaPipeline {
     }
 
     public func teardown() async {
-        await renderer?.teardown()
+        let audioSink = self.audioSink
+        let renderer = self.renderer
+        // In-flight decodes must not restart playback after teardown.
+        self.audioSink = nil
+        self.renderer = nil
+        audioDecoder = nil
+        videoDecoder = nil
         await audioSink?.teardown()
+        await renderer?.teardown()
     }
 
     public func snapshot() -> MediaPipelineStats {
