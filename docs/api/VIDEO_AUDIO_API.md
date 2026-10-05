@@ -293,3 +293,18 @@ It derives queued frames from the player sample clock, without asynchronous buff
 completion tasks. The queue accepts up to 120 ms, including valid long Opus packets
 and short recovered bursts. This adds about 20 ms at start; device latency is separate.
 PCM sample rate and channel count must match the prepared format before bytes are copied.
+
+### Video receive and decode work
+
+Annex-B parsing scans borrowed bytes and copies only selected parameter sets or
+final decoder sample bytes. It does not copy the full payload into an array or
+allocate intermediate picture NAL buffers. Nonzero Data indices, escaped bytes,
+empty NAL units, and three-byte start codes at the end are covered by tests.
+
+Run `python3 scripts/benchmark-video-parsing.py` with the full Xcode toolchain to
+compare the parser with revision `3051f020f6cfed454feaf729f206df1b27421940`.
+It compiles both parsers with optimization, checks sample byte equality, and
+reports the median of five runs of 400 iterations. Temporary sources and binaries
+are removed. On the development Mac, the 187,500-byte synthetic picture measured
+0.209 ms before and 0.014 ms after. These numbers cover parameter-set extraction
+and sample conversion, not network receive, decode, GPU work, or stream FPS.

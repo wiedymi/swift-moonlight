@@ -1,99 +1,84 @@
 import Foundation
+import Darwin
 
 public enum AnnexBBitstream {
     public static func splitNALUnits(in data: Data) -> [Data] {
-        let bytes = [UInt8](data)
-        guard !bytes.isEmpty else {
-            return []
+        data.withUnsafeBytes { bytes in
+            nalUnitRanges(in: bytes).map { Data(bytes[$0]) }
         }
-
-        let starts = startCodeRanges(in: bytes)
-        guard !starts.isEmpty else {
-            return []
-        }
-
-        var units: [Data] = []
-        units.reserveCapacity(starts.count)
-
-        for (index, range) in starts.enumerated() {
-            let unitStart = range.upperBound
-            let unitEnd = index + 1 < starts.count ? starts[index + 1].lowerBound : bytes.count
-            guard unitStart < unitEnd else {
-                continue
-            }
-            units.append(Data(bytes[unitStart..<unitEnd]))
-        }
-
-        return units
     }
 
     public static func codecParameterSets(from data: Data, codec: VideoCodec) -> [Data] {
-        splitNALUnits(in: data).filter { unit in
-            guard let first = unit.first else {
-                return false
-            }
-
-            switch codec {
-            case .h264:
-                let type = first & 0x1F
-                return type == 7 || type == 8
-            case .hevc:
-                let type = (first & 0x7E) >> 1
-                return type == 32 || type == 33 || type == 34
-            case .av1:
-                return false
+        data.withUnsafeBytes { bytes in
+            nalUnitRanges(in: bytes).compactMap { range in
+                isParameterSet(bytes[range.lowerBound], codec: codec) ? Data(bytes[range]) : nil
             }
         }
     }
 
     public static func containsParameterSets(_ data: Data, codec: VideoCodec) -> Bool {
-        !codecParameterSets(from: data, codec: codec).isEmpty
+        data.withUnsafeBytes { bytes in
+            nalUnitRanges(in: bytes).contains { isParameterSet(bytes[$0.lowerBound], codec: codec) }
+        }
     }
 
     public static func lengthPrefixedSample(from data: Data) -> Data {
-        let units = splitNALUnits(in: data)
-        guard !units.isEmpty else {
-            return data
-        }
-
-        var output = Data()
-        for unit in units {
-            output.append(lengthPrefix(for: unit.count))
-            output.append(unit)
-        }
-        return output
-    }
-
-    private static func startCodeRanges(in bytes: [UInt8]) -> [Range<Int>] {
-        var ranges: [Range<Int>] = []
-        var index = 0
-
-        while index + 3 < bytes.count {
-            if bytes[index] == 0, bytes[index + 1] == 0 {
-                if bytes[index + 2] == 0, bytes[index + 3] == 1 {
-                    ranges.append(index..<(index + 4))
-                    index += 4
-                    continue
-                }
-                if bytes[index + 2] == 1 {
-                    ranges.append(index..<(index + 3))
-                    index += 3
-                    continue
-                }
+        data.withUnsafeBytes { bytes in
+            let ranges = nalUnitRanges(in: bytes)
+            guard !ranges.isEmpty, ranges.allSatisfy({ $0.count <= UInt32.max }) else { return data }
+            var output = Data()
+            output.reserveCapacity(data.count)
+            for range in ranges {
+                var length = UInt32(range.count).bigEndian
+                withUnsafeBytes(of: &length) { output.append(contentsOf: $0) }
+                output.append(contentsOf: bytes[range])
             }
-            index += 1
+            return output
         }
-
-        return ranges
     }
 
-    private static func lengthPrefix(for count: Int) -> Data {
-        Data([
-            UInt8(truncatingIfNeeded: count >> 24),
-            UInt8(truncatingIfNeeded: count >> 16),
-            UInt8(truncatingIfNeeded: count >> 8),
-            UInt8(truncatingIfNeeded: count)
-        ])
+    private static func isParameterSet(_ first: UInt8, codec: VideoCodec) -> Bool {
+        switch codec {
+        case .h264:
+            let type = first & 0x1F
+            return type == 7 || type == 8
+        case .hevc:
+            let type = (first & 0x7E) >> 1
+            return type == 32 || type == 33 || type == 34
+        case .av1:
+            return false
+        }
+    }
+
+    // Offsets refer to this temporary raw buffer, so Data slices need no rebasing.
+    private static func nalUnitRanges(in bytes: UnsafeRawBufferPointer) -> [Range<Int>] {
+        guard let base = bytes.baseAddress, bytes.count >= 3 else { return [] }
+        var ranges: [Range<Int>] = []
+        var unitStart: Int?
+        var index = 0
+        while bytes.count - index >= 3 {
+            // Encoded payloads rarely contain zero. libc can skip nonzero bytes in bulk.
+            if bytes[index] != 0 {
+                guard let zero = memchr(base.advanced(by: index), 0, bytes.count - index) else { break }
+                index = base.distance(to: zero)
+                guard bytes.count - index >= 3 else { break }
+            }
+            let startCodeLength: Int
+            if bytes[index + 1] == 0, bytes[index + 2] == 1 {
+                startCodeLength = 3
+            } else if bytes.count - index >= 4, bytes[index + 1] == 0,
+                      bytes[index + 2] == 0, bytes[index + 3] == 1 {
+                startCodeLength = 4
+            } else {
+                index += 1
+                continue
+            }
+            if let unitStart, unitStart < index { ranges.append(unitStart..<index) }
+            index += startCodeLength
+            unitStart = index
+        }
+        if let unitStart, unitStart < bytes.count { ranges.append(unitStart..<bytes.count) }
+        return ranges
     }
 }
 

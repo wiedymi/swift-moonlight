@@ -79,3 +79,31 @@ func convertsRepeatedFourByteStartCodesToLengthPrefixedSample() {
 
     #expect(sample.hexString == "000000024001000000024201000000022601")
 }
+
+@Test
+func annexBHandlesEmptyUnitsAndTrailingStartCode() {
+    let bytes = Data([0xFF, 0, 0, 1, 0, 0, 0, 1, 0x65, 0xAA, 0, 0, 1])
+    #expect(AnnexBBitstream.splitNALUnits(in: bytes) == [Data([0x65, 0xAA])])
+    #expect(AnnexBBitstream.lengthPrefixedSample(from: bytes) == Data([0, 0, 0, 2, 0x65, 0xAA]))
+}
+
+@Test
+func annexBReadsDataWithNonzeroStartIndexAndKeepsEscapedBytes() {
+    let storage = Data([0xFF, 0xFF, 0, 0, 1, 0x67, 0, 0, 3, 1, 0, 0, 0, 1, 0x65, 0xBB])
+    let bytes = storage.dropFirst(2)
+    #expect(bytes.startIndex == 2)
+    #expect(AnnexBBitstream.splitNALUnits(in: bytes) == [Data([0x67, 0, 0, 3, 1]), Data([0x65, 0xBB])])
+    #expect(AnnexBBitstream.codecParameterSets(from: bytes, codec: .h264) == [Data([0x67, 0, 0, 3, 1])])
+    #expect(AnnexBBitstream.containsParameterSets(bytes, codec: .h264))
+    #expect(!AnnexBBitstream.containsParameterSets(bytes, codec: .hevc))
+    #expect(AnnexBBitstream.lengthPrefixedSample(from: bytes) == Data([0, 0, 0, 5, 0x67, 0, 0, 3, 1, 0, 0, 0, 2, 0x65, 0xBB]))
+}
+
+@Test
+func annexBPreservesPayloadsWithoutNALUnits() {
+    for bytes in [Data(), Data([0]), Data([0, 0]), Data([0, 0, 1]), Data([4, 5, 6, 7])] {
+        #expect(AnnexBBitstream.splitNALUnits(in: bytes).isEmpty)
+        #expect(AnnexBBitstream.lengthPrefixedSample(from: bytes) == bytes)
+        #expect(!AnnexBBitstream.containsParameterSets(bytes, codec: .h264))
+    }
+}
