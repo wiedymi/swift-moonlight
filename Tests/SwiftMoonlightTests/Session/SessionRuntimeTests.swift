@@ -1180,3 +1180,33 @@ private actor OpenVideoSource: MediaPacketSource {
     #expect(await session.mediaPipelineHandle().snapshot().decodedVideoFrames == 0)
     await runtime.stop()
 }
+
+@Test func endedVideoSourceDoesNotSendLaterPrimingRequests() async throws {
+    let session = MoonlightSession()
+    try await session.attachVideoDecoder(FailingVideoDecoder(
+        error: MoonlightError(.unsupportedOperation, message: "VideoToolbox decode failed: -12909")
+    ))
+    try await session.configureVideo(format: .init(codec: .hevc, dimensions: CGSize(width: 640, height: 360)))
+    var packets: [Data] = []
+    for index in 1...130 {
+        packets.append(makeRuntimeVideoPacket(sequenceNumber: UInt16(index), timestamp: UInt32(index),
+            streamPacketIndex: UInt32(index), frameIndex: UInt32(index),
+            flags: VideoPacketHeader.startOfFrameFlag | VideoPacketHeader.endOfFrameFlag,
+            payload: Data([0, 0, 0, 0, 0, 0, 0, 0, 0x99])))
+    }
+    let transport = RecordingControlChannelTransport()
+    let video = VideoIngestService(source: FixtureMediaPacketSource(packets: packets),
+        depacketizer: SimpleVideoDepacketizer(configuration: .init(codec: .hevc, dimensions: CGSize(width: 640, height: 360))),
+        pipeline: await session.mediaPipelineHandle())
+    let runtime = SessionRuntime(session: session,
+        controlService: ControlChannelService(transport: transport, logger: TestLogger()), videoService: video)
+    await runtime.start()
+    for _ in 0..<100 {
+        if await video.snapshotObservedPacketCount() == 130 { break }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    #expect(await video.snapshotObservedPacketCount() == 130)
+    try await Task.sleep(for: .milliseconds(1200))
+    #expect(await transport.recordedSentPackets().count == 1)
+    await runtime.stop()
+}

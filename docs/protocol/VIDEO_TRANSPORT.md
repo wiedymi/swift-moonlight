@@ -217,3 +217,6 @@ before requesting repair when every frame is incomplete. It shares the same
 observation counters with the frame loop and updates them before suspension.
 Older snapshots cannot reduce these counters. The monitor adds a small fixed
 polling cost, is canceled on stop, and does not await control sends.
+
+Each monitor also ends when its corresponding read loop ends, so an ended
+video or control source does not leave a periodic task running.

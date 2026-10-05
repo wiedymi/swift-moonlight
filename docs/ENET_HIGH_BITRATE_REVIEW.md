@@ -192,7 +192,7 @@ actual decode/presentation timing still need the user's device check.
 - SwiftENet: 38 local tests pass in Debug, Release, and Thread Sanitizer with
   Swift 6 and complete strict concurrency. Tests cover the timer faults, ACK
   progress, byte totals, older metrics, and counted oversized socket drops.
-- SwiftMoonlight: 368 local headless tests pass in Debug and Release. New checks
+- SwiftMoonlight: 369 local headless tests pass in Debug and Release. New checks
   cover batch bounds/order, frame boundaries across batches, and all 100 video
   packets continuing to be read while a recovery send is deliberately held.
 - The optional C/Swift check verifies each reliable payload and serial exactly
@@ -254,3 +254,6 @@ A new test supplies 160 incomplete frames and keeps the source open; the
 runtime requests a keyframe without waiting for a complete frame or source end.
 This adds one bounded 100 ms monitor task. Both the monitor and frame loop use
 one observation owner and mark events before suspension to avoid duplicates.
+
+Read-loop completion cancels the associated periodic task. A regression test
+checks that an ended video source does not send a later decoder-priming request.

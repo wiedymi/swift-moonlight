@@ -211,6 +211,9 @@ public actor SessionRuntime {
     }
 
     private func runControlLoop(service: ControlChannelService) async {
+        guard !Task.isCancelled else { return }
+        let metricsTask = controlMetricsTask
+        defer { metricsTask?.cancel() }
         while !Task.isCancelled {
             do {
                 let message: ControlMessage?
@@ -302,6 +305,9 @@ public actor SessionRuntime {
     }
 
     private func runVideoLoop(service: VideoIngestService) async {
+        guard !Task.isCancelled else { return }
+        let monitorTask = recoveryMonitorTask
+        defer { monitorTask?.cancel() }
         var lastMetricsPublishTime: Date?
         while !Task.isCancelled {
             do {
