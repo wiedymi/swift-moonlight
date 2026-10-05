@@ -1,5 +1,10 @@
 # Test Plan
 
+The current SwiftENet package checks and CENet comparison are in
+[SWIFT_ENET_PACKAGE.md](SWIFT_ENET_PACKAGE.md). The reference harness also supports
+`--enet-source`, `--fragment-count`, `--rate`, `--width`, and an optional saved Swift source folder
+with `--swift-baseline`. These do not add package dependencies.
+
 This file tracks the concrete test inventory for `swift-moonlight`.
 
 ## Smoke Tests
@@ -77,3 +82,15 @@ Pass conditions:
 - A restart transition retains the newest decoded frame and ignores old-stream frames until the next prepare.
 - Mac and iOS Simulator app builds check device and standard-scaling paths.
 - Live resize appearance and stream latency require later device review.
+
+## Swift ENet checks
+
+- Run `swift test` for byte fixtures, ordering, wrap, retries, bounds, socket
+  readiness, IPv4/IPv6, cancellation, and shared connection close.
+- Run `python3 scripts/enet-checks/run.py --repeats 3 --output /tmp/enet.json`
+  for release measurements and independent standard ENet checks.
+- Add `--moonlight-host` to use pinned Moonlight ENet as the external host.
+- Use `--count 70000 --channels 1 --scenario loopback --moonlight-host` to check
+  sequence wrap against the reference. Temporary builds are removed by the tool.
+- Build the `SwiftMoonlight` scheme for generic macOS and iOS Simulator with
+  default Xcode DerivedData. Live VVMoon/Sunshine/Apollo checks remain for review.

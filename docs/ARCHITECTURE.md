@@ -117,3 +117,19 @@ Good:
 Bad:
 - forcing app code to manually sequence handshake endpoints
 - exposing packet types as the primary public API
+
+## Swift ENet control/input transport
+
+The pinned [SwiftENet package](https://github.com/wiedymi/swift-enet) owns the
+wire codec, deterministic single-peer engine, IPv4/IPv6 socket, reads, idle ping,
+and native retry timer. `Network/Control/` owns Moonlight startup framing,
+encryption, and the reliable application ping. Control and input adapters share
+one connection actor and encryption sequence. These actors share the ENet
+client's serial executor. Media paths are unchanged.
+
+CENet is absent from package targets and tests. The optional external reference
+harness compiles historical C sources in a temporary directory and removes them.
+[SWIFT_ENET_PACKAGE.md](SWIFT_ENET_PACKAGE.md) records the package extraction,
+review, and current C-host checks. Earlier embedded-engine measurements remain
+in the historical ENet reports. The package and library explicitly use Swift 6
+language mode with complete strict concurrency checks.

@@ -1,0 +1,14 @@
+{
+  "originHash" : "7dfc223bf88faadd4b2233483112f97464dd7b7bc331d75a4a4f34cb0e3d58cf",
+  "pins" : [
+    {
+      "identity" : "swift-enet",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/wiedymi/swift-enet.git",
+      "state" : {
+        "revision" : "4ce4ba7b67b5b0cdfb2c62a4d1048141520d3664"
+      }
+    }
+  ],
+  "version" : 3
+}

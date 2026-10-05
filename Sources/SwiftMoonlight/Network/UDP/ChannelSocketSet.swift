@@ -201,8 +201,8 @@ public struct ChannelSocketFactory: Sendable {
         controlEncryption: ControlEncryptionContext? = nil,
         includeControlTransports: Bool = true,
         negotiatedSession: NegotiatedSession
-    ) throws -> ChannelSocketSet {
-        try makeSockets(
+    ) async throws -> ChannelSocketSet {
+        try await makeSockets(
             for: host,
             channels: negotiatedSession.channels,
             controlEncryption: controlEncryption,
@@ -215,7 +215,7 @@ public struct ChannelSocketFactory: Sendable {
         channels: [EstablishedChannel],
         controlEncryption: ControlEncryptionContext? = nil,
         includeControlTransports: Bool = true
-    ) throws -> ChannelSocketSet {
+    ) async throws -> ChannelSocketSet {
         var sockets = ChannelSocketSet()
         let enetConnectData = channels
             .first(where: { $0.isConnected && $0.descriptor.kind == .control })?
@@ -227,7 +227,7 @@ public struct ChannelSocketFactory: Sendable {
            let enetConnectData,
            let controlChannel = channels.first(where: { $0.isConnected && $0.descriptor.kind == .control })
         {
-            let transportPair = try makeENetControlTransports(
+            let transportPair = try await makeENetControlTransports(
                 host: host,
                 port: controlChannel.descriptor.port,
                 connectData: enetConnectData,
@@ -314,7 +314,7 @@ public struct ChannelSocketFactory: Sendable {
         controlEncryption: ControlEncryptionContext? = nil,
         includeControlTransports: Bool = true
     ) async throws -> ChannelSocketSet {
-        let sockets = try makeSockets(
+        let sockets = try await makeSockets(
             for: host,
             channels: channels,
             controlEncryption: controlEncryption,
@@ -330,11 +330,11 @@ public struct ChannelSocketFactory: Sendable {
         port: UInt16,
         connectData: UInt32,
         controlEncryption: ControlEncryptionContext?
-    ) throws -> (
+    ) async throws -> (
         control: any ControlChannelTransport & LocalPortReporting & ClosableTransport,
         input: any InputPacketTransport & LocalPortReporting & ClosableTransport
     ) {
-        let session = try ENetControlSession(
+        let session = try await ENetControlSession(
             remoteHost: host.endpoint.address,
             remotePort: port,
             connectData: connectData,

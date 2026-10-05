@@ -62,7 +62,7 @@ public struct SessionRuntimeFactory: Sendable {
             let controlChannels = negotiatedSession.channels.filter {
                 $0.descriptor.kind == .control || $0.descriptor.kind == .input
             }
-            let controlSockets = try socketFactory.makeSockets(
+            let controlSockets = try await socketFactory.makeSockets(
                 for: host,
                 channels: controlChannels,
                 controlEncryption: runtimeConfiguration.controlEncryption

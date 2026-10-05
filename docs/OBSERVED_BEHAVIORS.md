@@ -646,3 +646,18 @@ Entry template:
 - Test:
   - unit
   - integration
+
+## Swift ENet replacement
+
+References: bundled ENet 1.3.18 at parent commit `3ae6b69`; MIT Moonlight ENet
+fork `c7353c059373f8d3fc83d451f8f1a477be3dc94e`.
+
+- The old bundle is standard ENet-style code, not the Moonlight patched fork.
+- The Moonlight fork uses a 900-byte default MTU, rounded RTT updates, bounded
+  linear retry delays, and socket waits that respect retry deadlines.
+- These transport rules are described in `docs/binary/ENET.md` before the Swift
+  implementation. Host/application control messages and encryption stay above
+  the ENet engine.
+- The optional reference check tests exact echo bytes against standard ENet and
+  the pinned Moonlight fork. The check is local transport evidence, not a claim
+  of full Sunshine/Apollo or device validation.

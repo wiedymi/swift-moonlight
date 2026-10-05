@@ -44,3 +44,8 @@ Related negotiation docs:
 - host compatibility notes
 - one or more hex examples
 - golden test mapping
+
+## ENet client transport
+
+See [binary/ENET.md](binary/ENET.md) for datagram headers, command layouts,
+sequence rules, limits, and the pinned behavior references.

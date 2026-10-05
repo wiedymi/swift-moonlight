@@ -1,0 +1,62 @@
+{
+  "reference": "3ae6b69cc4cad054d5ece2ef1f9ab1daf24dd0de",
+  "languageMode": 6,
+  "strictConcurrency": "complete",
+  "compiler": "Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx27.2.0",
+  "machine": "Apple M5 Max",
+  "memoryBytes": 68719476736,
+  "macOS": "27.2",
+  "sourceSHA256": {
+    "Sources/SwiftMoonlight/Network/Control/ENetControlTransport.swift": "768c0ec1b59308528980b7ca109f8d1a385ada63eaeb712cec43f150b2ce76a7",
+    "SwiftENet/ENetClient.swift": "caf16022e05b1c77f5dfbccc43241cad8103a07ae9faaa921dcd25c05507d71e",
+    "SwiftENet/ENetDatagramSocket.swift": "b4a286f274aad55618f16ed83dc6d7523d0085d2dd45b26850680b862798d9d6",
+    "SwiftENet/ENetError.swift": "3f3bb83cbb716b1be3942f15de8d761b71f5bf5cfb1c94edd2d78c117e2cfd0b",
+    "SwiftENet/ENetExecutor.swift": "3e2f163770f1d922fc759b8e82a15f40592b69b6209f5b8a8c2c59c11e5b6b45",
+    "SwiftENet/ENetMetrics.swift": "edd0cfcaccf05d22b476ced843cc22a736aad8327dbe21a0d730e3875996a45f",
+    "SwiftENet/ENetPacket.swift": "8f8d3bd49db1bac716f15b3b9a0d71cabb4193069780e1c426d7dbb9af1b6aa1",
+    "SwiftENet/ENetPeer.swift": "006d4a1ad000b8ecb1a4800fea23182e3844d19078fbd966d32fb8c6fc758e4e",
+    "SwiftENet/ENetWire.swift": "fc1a4a66585f2dedcb7756c79866bae75bae575805af68a7470f3d0fe8476b27"
+  },
+  "results": [
+    {
+      "count": 70000,
+      "cpuSeconds": 2.60784,
+      "encrypted": false,
+      "medianRTTMs": 0.5845,
+      "p95RTTMs": 0.635584,
+      "p99RTTMs": 0.689666,
+      "packetsPerSecond": 27309.96237058601,
+      "peakRSSBytes": 8781824,
+      "reliable": true,
+      "size": 32,
+      "transport": "CENet",
+      "wallSeconds": 2.563167208,
+      "scenario": "loopback",
+      "repeat": 0,
+      "hostReference": "c7353c059373f8d3fc83d451f8f1a477be3dc94e",
+      "channels": 1,
+      "ratePerSecond": 0,
+      "width": 16
+    },
+    {
+      "count": 70000,
+      "cpuSeconds": 2.353944,
+      "encrypted": false,
+      "medianRTTMs": 0.435792,
+      "p95RTTMs": 0.471625,
+      "p99RTTMs": 0.49675,
+      "packetsPerSecond": 36478.782198671965,
+      "peakRSSBytes": 9633792,
+      "reliable": true,
+      "size": 32,
+      "transport": "Swift",
+      "wallSeconds": 1.918923708,
+      "scenario": "loopback",
+      "repeat": 0,
+      "hostReference": "c7353c059373f8d3fc83d451f8f1a477be3dc94e",
+      "channels": 1,
+      "ratePerSecond": 0,
+      "width": 16
+    }
+  ]
+}

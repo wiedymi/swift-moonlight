@@ -141,7 +141,7 @@ public struct ChannelSocketFactory: Sendable {
     public func makeSockets(
         for host: MoonlightHost,
         negotiatedSession: NegotiatedSession
-    ) throws -> ChannelSocketSet
+    ) async throws -> ChannelSocketSet
 }
 
 public struct SessionRuntimeFactory: Sendable {
@@ -334,3 +334,12 @@ public protocol ControllerFeedbackSink: Sendable {
 - sessions must remain usable in headless mode
 - event stream must be the primary observation channel for apps and tests
 - metric stream must expose runtime observation counts without requiring direct access to `SessionRuntime.snapshot()`
+
+## Swift ENet API migration
+
+High-level client and session calls retain their existing async API. Direct
+users of `ENetControlSession.init` and `ChannelSocketFactory.makeSockets` must
+add `await`; `ENetControlSession.close()` is also async. The control/input
+transport protocol signatures and metrics snapshot fields are unchanged.
+Queue and packet limits are specified in `docs/binary/ENET.md`. Public transport
+failures remain `MoonlightError`; task cancellation remains `CancellationError`.

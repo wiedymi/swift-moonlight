@@ -110,7 +110,7 @@ func channelSocketFactoryCreatesLoopbackReadySockets() async throws {
         ]
     )
 
-    let sockets = try ChannelSocketFactory().makeSockets(for: host, negotiatedSession: negotiated)
+    let sockets = try await ChannelSocketFactory().makeSockets(for: host, negotiatedSession: negotiated)
 
     #expect(sockets.controlTransport != nil)
     #expect(sockets.inputTransport != nil)

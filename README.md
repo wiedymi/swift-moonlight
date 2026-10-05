@@ -8,6 +8,9 @@
 
 Pure Swift Moonlight-compatible client stack for Apple platforms.
 
+Swift ENet measurements and optimization details:
+[SWIFT_ENET_PACKAGE.md](docs/SWIFT_ENET_PACKAGE.md).
+
 This package focuses on protocol, transport, media, input, and runtime orchestration for Sunshine and Apollo hosts. App UI is intentionally kept outside the core library so consumers can build their own SwiftUI, UIKit, AppKit, or game-surface integrations.
 
 ## Status
@@ -182,7 +185,8 @@ Or generate and open the Xcode project:
 - Upstream reference sources are optional local checkouts for behavioral study only. See [reference sources](docs/REFERENCES.md) for links and recorded revisions. Package checkouts do not download them.
 - This repository is a clean-room Swift implementation under MIT. Do not copy, paste, or mechanically port GPL reference code.
 - Opus decoding uses Apple AudioToolbox. No Opus binary dependency is bundled.
-- ENet is vendored under `Vendor/ENet`.
+- ENet control/input transport uses the pinned SwiftENet package, with no CENet dependency.
+- See `docs/binary/ENET.md` for the client scope and `docs/ENET_VALIDATION.md` for checks and performance measurements.
 
 ## License
 

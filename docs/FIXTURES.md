@@ -171,3 +171,14 @@ including SPS and PPS. It was encoded locally with Apple VideoToolbox, with fram
 reordering disabled. It contains no captured desktop content. The decoder test
 submits it repeatedly with distinct timestamps and verifies real NV12 pixel
 buffers and ordered callback completion in Debug and Release.
+
+## ENet fixtures
+
+The pinned SwiftENet package owns the synthetic golden connect bytes, all command
+layouts, sequence/time wrap, packet order, retry, fragment, queue/window, and
+malformed packet cases. These are synthetic fixtures, not captured private sessions.
+`Network/ENetSocketTests.swift` checks Moonlight startup, background retries and
+receive, shared adapters, read cancellation, and close against a local UDP peer.
+`scripts/enet-checks/run.py` checks the actual old/new transports against an
+external ENet C echo host. No C module is required for `swift test`. Reference
+sources and build files are removed after each run.

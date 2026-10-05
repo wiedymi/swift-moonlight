@@ -1,497 +1,151 @@
-import CENet
 import Foundation
+import SwiftENet
 
-private enum ENetControlConstants {
-    static let channelCount = Int(ControlChannelID.count)
-    static let connectTimeoutMs: UInt32 = 10_000
-    static let servicePollMs: UInt32 = 5
-    static let receiveIdleSleep: Duration = .milliseconds(1)
-    static let periodicPingInterval: Duration = .milliseconds(100)
-    static let startAPlainType: UInt16 = 0x0305
-    static let startAEncryptedType: UInt16 = 0x0302
-    static let startBType: UInt16 = 0x0307
-    static let periodicPingType: UInt16 = 0x0200
-    static let inputPacketType: UInt16 = 0x0206
-}
+public final class ENetControlSession: Sendable {
+    fileprivate let connection: ENetConnection
+    public var controlEncryption: ControlEncryptionContext? { connection.encryption }
 
-private enum ENetReceiveResult {
-    case packet(Data)
-    case none
-    case disconnected
-}
-
-private enum ENetLibraryState {
-    static let initializeResult: Int32 = enet_initialize()
-}
-
-private func ensureENetInitialized() throws {
-    guard ENetLibraryState.initializeResult == 0 else {
-        throw MoonlightError(.unsupportedOperation, message: "Failed to initialize ENet")
+    public init(remoteHost: String, remotePort: UInt16, connectData: UInt32,
+                controlEncryption: ControlEncryptionContext?) async throws {
+        let client: ENetClient
+        do { client = try await ENetClient.connect(host: remoteHost, port: remotePort, connectData: connectData) }
+        catch { throw transportError(error) }
+        connection = ENetConnection(client: client, encryption: controlEncryption)
+        do { try await connection.start() }
+        catch { await connection.close(); throw transportError(error) }
     }
+
+    deinit {
+        let connection = connection
+        Task { await connection.close() }
+    }
+
+    public func close() async { await connection.close() }
+    static var periodicPingUsesReliableDelivery: Bool { true }
+    static func makePeriodicPingPayload() -> Data { Data([4, 0, 0, 0, 0, 0, 0, 0]) }
 }
 
-private final class ENetControlSessionCore: @unchecked Sendable {
-    private let lock = NSLock()
+fileprivate actor ENetConnection {
+    private let client: ENetClient
+    nonisolated let encryption: ControlEncryptionContext?
+    nonisolated var unownedExecutor: UnownedSerialExecutor { client.unownedExecutor }
     private let crypto = ControlPacketCrypto()
-    private var host: UnsafeMutablePointer<ENetHost>?
-    private var peer: UnsafeMutablePointer<ENetPeer>?
-    private var nextSequenceNumber: UInt32 = 0
-    private var closed = false
+    private var encryptionSequence: UInt64 = 0
+    private var pingTask: Task<Void, Never>?
 
-    init(
-        remoteHost: String,
-        remotePort: UInt16,
-        connectData: UInt32,
-        controlEncryption: ControlEncryptionContext?
-    ) throws {
-        try ensureENetInitialized()
-
-        let host = enet_host_create(nil, 1, ENetControlConstants.channelCount, 0, 0)
-        guard let host else {
-            throw MoonlightError(.unsupportedOperation, message: "Failed to create ENet host")
-        }
-
-        self.host = host
-
-        var address = ENetAddress()
-        address.port = remotePort
-        let resolveResult = remoteHost.withCString { enet_address_set_host(&address, $0) }
-        guard resolveResult == 0 else {
-            destroyLockedResources()
-            throw MoonlightError(.unsupportedOperation, message: "Failed to resolve ENet host \(remoteHost)")
-        }
-
-        guard let peer = enet_host_connect(host, &address, ENetControlConstants.channelCount, connectData) else {
-            destroyLockedResources()
-            throw MoonlightError(.unsupportedOperation, message: "Failed to create ENet peer")
-        }
-
-        self.peer = peer
-        enet_peer_timeout(peer, 2, 10_000, 10_000)
-
-        try waitForConnect()
-        try sendStartupHandshake(controlEncryption: controlEncryption)
+    init(client: ENetClient, encryption: ControlEncryptionContext?) {
+        self.client = client; self.encryption = encryption
     }
 
-    deinit {
-        close()
-    }
-
-    func send(packet: Data, channelID: UInt8, reliable: Bool) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        try sendLocked(packet: packet, channelID: channelID, reliable: reliable)
-    }
-
-    func sendControlPayload(
-        packetType: UInt16,
-        payload: Data,
-        channelID: UInt8,
-        reliable: Bool,
-        encryption: ControlEncryptionContext?
-    ) throws {
-        lock.lock()
-        defer { lock.unlock() }
-
-        let packet = try makeControlPacketLocked(
-            packetType: packetType,
-            payload: payload,
-            encryption: encryption
-        )
-        try sendLocked(packet: packet, channelID: channelID, reliable: reliable)
-    }
-
-    func sendInputPacket(
-        payload: Data,
-        channelID: UInt8,
-        reliable: Bool,
-        encryption: ControlEncryptionContext?
-    ) throws {
-        try sendControlPayload(
-            packetType: ENetControlConstants.inputPacketType,
-            payload: payload,
-            channelID: channelID,
-            reliable: reliable,
-            encryption: encryption
-        )
-    }
-
-    func receivePacket(timeoutMs: UInt32) throws -> ENetReceiveResult {
-        lock.lock()
-        defer { lock.unlock() }
-
-        guard let host else {
-            return .disconnected
-        }
-
-        var event = ENetEvent()
-        let serviceResult = enet_host_service(host, &event, timeoutMs)
-        if serviceResult < 0 {
-            throw MoonlightError(.unsupportedOperation, message: "ENet control service failed")
-        }
-        if serviceResult == 0 {
-            return .none
-        }
-
-        switch event.type {
-        case ENET_EVENT_TYPE_RECEIVE:
-            guard let packet = event.packet else {
-                return .none
-            }
-            defer { enet_packet_destroy(packet) }
-            let data = Data(bytes: packet.pointee.data, count: packet.pointee.dataLength)
-            return .packet(data)
-
-        case ENET_EVENT_TYPE_DISCONNECT:
-            return .disconnected
-
-        case ENET_EVENT_TYPE_CONNECT:
-            return .none
-
-        default:
-            return .none
-        }
-    }
-
-    func localPort() throws -> UInt16 {
-        lock.lock()
-        defer { lock.unlock() }
-
-        guard let host else {
-            throw MoonlightError(.unsupportedOperation, message: "ENet host is closed")
-        }
-
-        var address = ENetAddress()
-        let result = enet_socket_get_address(host.pointee.socket, &address)
-        guard result == 0 else {
-            throw MoonlightError(.unsupportedOperation, message: "Failed to query ENet local port")
-        }
-        return address.port
-    }
-
-    func snapshotControlTransportMetrics() -> ControlTransportMetricsSnapshot {
-        lock.lock()
-        defer { lock.unlock() }
-
-        guard let peer else {
-            return ControlTransportMetricsSnapshot(isConnected: false)
-        }
-
-        let isConnected = peer.pointee.state == ENET_PEER_STATE_CONNECTED
-        guard isConnected else {
-            return ControlTransportMetricsSnapshot(isConnected: false)
-        }
-
-        let lossScale = Double(ENET_PEER_PACKET_LOSS_SCALE)
-        return ControlTransportMetricsSnapshot(
-            isConnected: true,
-            roundTripTimeMs: Int(peer.pointee.roundTripTime),
-            roundTripTimeVarianceMs: Int(peer.pointee.roundTripTimeVariance),
-            packetLossRatio: Double(peer.pointee.packetLoss) / lossScale,
-            packetLossVarianceRatio: Double(peer.pointee.packetLossVariance) / lossScale
-        )
-    }
-
-    func close() {
-        lock.lock()
-        defer { lock.unlock() }
-        destroyLockedResources()
-    }
-
-    private func waitForConnect() throws {
-        guard let host, let peer else {
-            throw MoonlightError(.unsupportedOperation, message: "ENet host is unavailable")
-        }
-
-        let deadline = Date().timeIntervalSince1970 + Double(ENetControlConstants.connectTimeoutMs) / 1000
-        while Date().timeIntervalSince1970 < deadline {
-            var event = ENetEvent()
-            let serviceResult = enet_host_service(host, &event, ENetControlConstants.servicePollMs)
-            if serviceResult < 0 {
-                throw MoonlightError(.unsupportedOperation, message: "ENet connect failed while servicing host")
-            }
-            if serviceResult == 0 {
-                continue
-            }
-
-            switch event.type {
-            case ENET_EVENT_TYPE_CONNECT:
-                enet_host_flush(host)
-                return
-            case ENET_EVENT_TYPE_RECEIVE:
-                if let packet = event.packet {
-                    enet_packet_destroy(packet)
+    func start() async throws {
+        let type: UInt16 = encryption == nil ? 0x0305 : 0x0302
+        try await sendPayload(type: type, payload: Data([0, 0]), channel: 0, reliable: true, encryption: encryption)
+        try await sendPayload(type: 0x0307, payload: Data([0]), channel: 0, reliable: true, encryption: encryption)
+        try await sendPing()
+        // One task lives for the session. SwiftENet independently owns its
+        // native retry timer; no per-packet sleep task is created here.
+        pingTask = Task { [weak self] in
+            do {
+                while !Task.isCancelled {
+                    try await Task.sleep(for: .milliseconds(100))
+                    guard let self else { return }
+                    try await self.sendPing()
                 }
-            case ENET_EVENT_TYPE_DISCONNECT:
-                throw MoonlightError(.unsupportedOperation, message: "ENet control peer disconnected during connect")
-            default:
-                break
-            }
+            } catch is CancellationError { }
+            catch { await self?.close(error: error) }
         }
-
-        enet_peer_disconnect_now(peer, 0)
-        throw MoonlightError(.unsupportedOperation, message: "Timed out connecting ENet control stream")
     }
 
-    private func sendStartupHandshake(controlEncryption: ControlEncryptionContext?) throws {
-        let startAType = if controlEncryption != nil {
-            ENetControlConstants.startAEncryptedType
+    private func sendPing() async throws {
+        try await sendPayload(type: 0x0200, payload: ENetControlSession.makePeriodicPingPayload(),
+                              channel: 0, reliable: true, encryption: encryption)
+    }
+
+    func send(_ packet: Data, channel: UInt8, reliable: Bool) async throws {
+        // The Moonlight fork can negotiate one channel. Keep its established
+        // channel-zero fallback here, rather than in the general ENet API.
+        let selected = Int(channel) < (await client.channelCount) ? channel : 0
+        try await client.send(packet, channelID: selected, delivery: reliable ? .reliable : .unreliable)
+    }
+
+    func sendPayload(type: UInt16, payload: Data, channel: UInt8, reliable: Bool,
+                     encryption: ControlEncryptionContext?) async throws {
+        let packet: Data
+        if let encryption {
+            guard payload.count <= 65_511, encryptionSequence <= UInt64(UInt32.max) else {
+                throw ENetError.messageTooLarge
+            }
+            packet = try crypto.seal(packetType: type, payload: payload, sequenceNumber: UInt32(encryptionSequence),
+                                     sender: .client, context: encryption)
+            encryptionSequence += 1
         } else {
-            ENetControlConstants.startAPlainType
+            guard payload.count <= ENetClient.maximumMessageSize - 2 else { throw ENetError.messageTooLarge }
+            var plain = Data([UInt8(truncatingIfNeeded: type), UInt8(truncatingIfNeeded: type >> 8)])
+            plain.append(payload); packet = plain
         }
-        try sendControlPayload(
-            packetType: startAType,
-            payload: Data([0x00, 0x00]),
-            channelID: ControlChannelID.generic,
-            reliable: true,
-            encryption: controlEncryption
-        )
-        try sendControlPayload(
-            packetType: ENetControlConstants.startBType,
-            payload: Data([0x00]),
-            channelID: ControlChannelID.generic,
-            reliable: true,
-            encryption: controlEncryption
-        )
+        try await send(packet, channel: channel, reliable: reliable)
     }
 
-    private func sendLocked(packet: Data, channelID: UInt8, reliable: Bool) throws {
-        guard let host, let peer else {
-            throw MoonlightError(.unsupportedOperation, message: "ENet control peer is unavailable")
-        }
-
-        let flags: enet_uint32 = reliable ? UInt32(ENET_PACKET_FLAG_RELIABLE.rawValue) : 0
-        let enetPacket = packet.withUnsafeBytes { bytes in
-            enet_packet_create(bytes.baseAddress, packet.count, flags)
-        }
-        guard let enetPacket else {
-            throw MoonlightError(.unsupportedOperation, message: "Failed to allocate ENet packet")
-        }
-
-        let effectiveChannelID: UInt8
-        if channelID < peer.pointee.channelCount {
-            effectiveChannelID = channelID
-        } else {
-            effectiveChannelID = ControlChannelID.generic
-        }
-
-        let sendResult = enet_peer_send(peer, effectiveChannelID, enetPacket)
-        if sendResult != 0 {
-            enet_packet_destroy(enetPacket)
-            throw MoonlightError(
-                .unsupportedOperation,
-                message: "Failed to queue ENet control packet (result=\(sendResult), peerState=\(peer.pointee.state.rawValue), channel=\(effectiveChannelID), peerChannels=\(peer.pointee.channelCount))"
-            )
-        }
-
-        _ = enet_host_service(host, nil, 0)
-        enet_host_flush(host)
+    func receivePacket() async throws -> Data? { try await client.receivePacket()?.data }
+    func localPort() -> UInt16 { client.localPort }
+    func metrics() async -> ControlTransportMetricsSnapshot {
+        let metrics = await client.snapshotMetrics()
+        return .init(isConnected: metrics.isConnected, roundTripTimeMs: metrics.roundTripTimeMs,
+                     roundTripTimeVarianceMs: metrics.roundTripTimeVarianceMs,
+                     packetLossRatio: metrics.packetLossRatio, packetLossVarianceRatio: metrics.packetLossVarianceRatio)
     }
-
-    private func makeControlPacketLocked(
-        packetType: UInt16,
-        payload: Data,
-        encryption: ControlEncryptionContext?
-    ) throws -> Data {
-        guard let encryption else {
-            return makePlainControlPacket(packetType: packetType, payload: payload)
-        }
-
-        let sequenceNumber = nextSequenceNumber
-        nextSequenceNumber &+= 1
-        return try crypto.seal(
-            packetType: packetType,
-            payload: payload,
-            sequenceNumber: sequenceNumber,
-            sender: .client,
-            context: encryption
-        )
-    }
-
-    private func destroyLockedResources() {
-        guard !closed else {
-            return
-        }
-        closed = true
-
-        if let peer {
-            enet_peer_disconnect_now(peer, 0)
-            self.peer = nil
-        }
-
-        if let host {
-            enet_host_destroy(host)
-            self.host = nil
-        }
-    }
-
-    private func makePlainControlPacket(packetType: UInt16, payload: Data) -> Data {
-        var packet = Data()
-        packet.appendLE(packetType)
-        packet.append(payload)
-        return packet
-    }
-}
-
-private extension Data {
-    mutating func appendLE(_ value: UInt16) {
-        append(UInt8(truncatingIfNeeded: value >> 0))
-        append(UInt8(truncatingIfNeeded: value >> 8))
-    }
-
-    mutating func appendLE(_ value: UInt32) {
-        append(UInt8(truncatingIfNeeded: value >> 0))
-        append(UInt8(truncatingIfNeeded: value >> 8))
-        append(UInt8(truncatingIfNeeded: value >> 16))
-        append(UInt8(truncatingIfNeeded: value >> 24))
-    }
-}
-
-public final class ENetControlSession: @unchecked Sendable {
-    fileprivate let core: ENetControlSessionCore
-    public let controlEncryption: ControlEncryptionContext?
-    private let periodicPingTask: Task<Void, Never>
-
-    public init(
-        remoteHost: String,
-        remotePort: UInt16,
-        connectData: UInt32,
-        controlEncryption: ControlEncryptionContext?
-    ) throws {
-        self.controlEncryption = controlEncryption
-        self.core = try ENetControlSessionCore(
-            remoteHost: remoteHost,
-            remotePort: remotePort,
-            connectData: connectData,
-            controlEncryption: controlEncryption
-        )
-        periodicPingTask = Task { [core, controlEncryption] in
-            while !Task.isCancelled {
-                do {
-                    try core.sendControlPayload(
-                        packetType: ENetControlConstants.periodicPingType,
-                        payload: Self.makePeriodicPingPayload(),
-                        channelID: ControlChannelID.generic,
-                        reliable: Self.periodicPingUsesReliableDelivery,
-                        encryption: controlEncryption
-                    )
-                } catch {
-                    // Transient send failures are expected during ENet startup and
-                    // lock contention with the receive loop.
-                }
-
-                do {
-                    try await Task.sleep(for: ENetControlConstants.periodicPingInterval)
-                } catch {
-                    return
-                }
-            }
-        }
-    }
-
-    deinit {
-        close()
-    }
-
-    public func close() {
-        periodicPingTask.cancel()
-        core.close()
-    }
-
-    static var periodicPingUsesReliableDelivery: Bool {
-        true
-    }
-
-    static func makePeriodicPingPayload() -> Data {
-        var payload = Data(capacity: 8)
-        payload.appendLE(UInt16(4))
-        payload.appendLE(UInt32(0))
-        payload.append(contentsOf: [0x00, 0x00])
-        return payload
-    }
+    func close(error: (any Error)? = nil) async { pingTask?.cancel(); pingTask = nil; await client.close(throwing: error) }
 }
 
 public actor ENetControlChannelTransport: TypedControlPacketTransport, ControlTransportMetricsReporting, LocalPortReporting, ClosableTransport {
     private let session: ENetControlSession
-
-    public init(session: ENetControlSession) {
-        self.session = session
-    }
-
+    public nonisolated var unownedExecutor: UnownedSerialExecutor { session.connection.unownedExecutor }
+    public init(session: ENetControlSession) { self.session = session }
     public func send(packet: Data, channelID: UInt8, reliable: Bool) async throws {
-        try session.core.send(packet: packet, channelID: channelID, reliable: reliable)
+        do { try await session.connection.send(packet, channel: channelID, reliable: reliable) }
+        catch { throw transportError(error) }
     }
-
-    public func sendControlPayload(
-        packetType: UInt16,
-        payload: Data,
-        channelID: UInt8,
-        reliable: Bool,
-        encryption: ControlEncryptionContext?
-    ) async throws {
-        try session.core.sendControlPayload(
-            packetType: packetType,
-            payload: payload,
-            channelID: channelID,
-            reliable: reliable,
-            encryption: encryption
-        )
+    public func sendControlPayload(packetType: UInt16, payload: Data, channelID: UInt8, reliable: Bool,
+                                   encryption: ControlEncryptionContext?) async throws {
+        do {
+            try await session.connection.sendPayload(type: packetType, payload: payload, channel: channelID,
+                                                      reliable: reliable, encryption: encryption)
+        } catch { throw transportError(error) }
     }
-
     public func receivePacket() async throws -> Data? {
-        while !Task.isCancelled {
-            switch try session.core.receivePacket(timeoutMs: 0) {
-            case .packet(let packet):
-                return packet
-            case .none:
-                do {
-                    try await Task.sleep(for: ENetControlConstants.receiveIdleSleep)
-                } catch {
-                    return nil
-                }
-                continue
-            case .disconnected:
-                return nil
-            }
-        }
-
-        return nil
+        do { return try await session.connection.receivePacket() }
+        catch { throw transportError(error) }
     }
-
-    public func localPort() async throws -> UInt16 {
-        try session.core.localPort()
-    }
-
-    public func snapshotControlTransportMetrics() async -> ControlTransportMetricsSnapshot {
-        session.core.snapshotControlTransportMetrics()
-    }
-
-    public func close() async {
-        session.close()
-    }
+    public func localPort() async throws -> UInt16 { await session.connection.localPort() }
+    public func snapshotControlTransportMetrics() async -> ControlTransportMetricsSnapshot { await session.connection.metrics() }
+    public func close() async { await session.close() }
 }
 
 public actor ENetInputPacketTransport: InputPacketTransport, LocalPortReporting, ClosableTransport {
     private let session: ENetControlSession
-
-    public init(session: ENetControlSession) {
-        self.session = session
-    }
-
+    public nonisolated var unownedExecutor: UnownedSerialExecutor { session.connection.unownedExecutor }
+    public init(session: ENetControlSession) { self.session = session }
     public func send(_ packet: Data, channelID: UInt8, reliable: Bool) async throws {
-        try session.core.sendInputPacket(
-            payload: packet,
-            channelID: channelID,
-            reliable: reliable,
-            encryption: session.controlEncryption
-        )
+        do {
+            try await session.connection.sendPayload(type: 0x0206, payload: packet, channel: channelID,
+                                                      reliable: reliable, encryption: session.controlEncryption)
+        } catch { throw transportError(error) }
     }
+    public func localPort() async throws -> UInt16 { await session.connection.localPort() }
+    public func close() async { await session.close() }
+}
 
-    public func localPort() async throws -> UInt16 {
-        try session.core.localPort()
-    }
-
-    public func close() async {
-        session.close()
+private func transportError(_ error: any Error) -> any Error {
+    guard let error = error as? ENetError else { return error }
+    switch error {
+    case .invalidPacket: return MoonlightError(.invalidControlMessage, message: "Invalid ENet packet")
+    case .invalidConnect: return MoonlightError(.networkRequestFailed, message: "ENet connection setup failed")
+    case .timedOut: return MoonlightError(.networkRequestFailed, message: "ENet connection timed out")
+    case .notConnected, .closed: return MoonlightError(.invalidStateTransition, message: "ENet connection is closed")
+    case .queueFull: return MoonlightError(.unsupportedOperation, message: "ENet queue limit exceeded")
+    case .invalidChannel: return MoonlightError(.unsupportedOperation, message: "Invalid ENet channel")
+    case .packetReaderInUse: return MoonlightError(.invalidStateTransition, message: "ENet permits one packet reader")
+    case .socketFailure: return MoonlightError(.networkRequestFailed, message: "ENet socket failed")
+    case .messageTooLarge: return MoonlightError(.unsupportedOperation, message: "ENet message size or sequence limit exceeded")
     }
 }

@@ -31,16 +31,9 @@ let package = Package(
             targets: ["SwiftMoonlightCapture"]
         ),
     ],
+    dependencies: [.package(url: "https://github.com/wiedymi/swift-enet.git", revision: "4ce4ba7b67b5b0cdfb2c62a4d1048141520d3664")],
     targets: [
-        .target(
-            name: "CENet",
-            path: "Vendor/ENet",
-            publicHeadersPath: "include"
-        ),
-        .target(
-            name: "SwiftMoonlight",
-            dependencies: ["CENet"]
-        ),
+        .target(name: "SwiftMoonlight", dependencies: [.product(name: "SwiftENet", package: "swift-enet")]),
         .target(
             name: "SwiftMoonlightTestAppSupport",
             dependencies: ["SwiftMoonlight"]
@@ -64,5 +57,6 @@ let package = Package(
                 .process("Fixtures")
             ]
         ),
-    ]
+    ],
+    swiftLanguageModes: [.v6]
 )

@@ -1,0 +1,57 @@
+{
+  "reference": "3ae6b69cc4cad054d5ece2ef1f9ab1daf24dd0de",
+  "languageMode": 6,
+  "strictConcurrency": "complete",
+  "compiler": "Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx27.2.0",
+  "machine": "Apple M5 Max",
+  "memoryBytes": 68719476736,
+  "macOS": "27.2",
+  "sourceSHA256": {
+    "Sources/SwiftMoonlight/Network/Control/ENetControlTransport.swift": "43ed69b4abd9465a1048cb94e615ff4a4d5eaad536463841b7af46a1b59d50ce",
+    "Sources/SwiftMoonlight/Network/Control/ENetDatagramSocket.swift": "85a8680303193aa07039e709006b523eb6c43fd7f722ca1929b4daecdab6f284",
+    "Sources/SwiftMoonlight/Protocol/ENet/ENetPeer.swift": "caccfc4e98fba457e086133d97aa90b760f57c58045aa3f1b3ab6f28372cccce",
+    "Sources/SwiftMoonlight/Protocol/ENet/ENetWire.swift": "715c406f34a32c14e0c96146e091eb9a2b41c81c51363cd68480770740e72576"
+  },
+  "results": [
+    {
+      "count": 70000,
+      "cpuSeconds": 2.62281,
+      "encrypted": false,
+      "medianRTTMs": 0.595875,
+      "p95RTTMs": 0.89725,
+      "p99RTTMs": 1.27875,
+      "packetsPerSecond": 24409.394007589664,
+      "peakRSSBytes": 8962048,
+      "reliable": true,
+      "size": 32,
+      "transport": "CENet",
+      "wallSeconds": 2.867748375,
+      "scenario": "loopback",
+      "repeat": 0,
+      "hostReference": "c7353c059373f8d3fc83d451f8f1a477be3dc94e",
+      "channels": 1,
+      "ratePerSecond": 0,
+      "width": 16
+    },
+    {
+      "count": 70000,
+      "cpuSeconds": 2.880956,
+      "encrypted": false,
+      "medianRTTMs": 0.537292,
+      "p95RTTMs": 0.927583,
+      "p99RTTMs": 1.223208,
+      "packetsPerSecond": 27013.429916162735,
+      "peakRSSBytes": 9240576,
+      "reliable": true,
+      "size": 32,
+      "transport": "Swift",
+      "wallSeconds": 2.591303667,
+      "scenario": "loopback",
+      "repeat": 0,
+      "hostReference": "c7353c059373f8d3fc83d451f8f1a477be3dc94e",
+      "channels": 1,
+      "ratePerSecond": 0,
+      "width": 16
+    }
+  ]
+}

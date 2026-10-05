@@ -3,7 +3,7 @@
 Status:
 - implemented as a transport-agnostic planning and establishment layer
 - live UDP media establishment is implemented for the current Sunshine ping-path
-- ENet-backed control/input establishment is implemented for the current Sunshine/Apollo control path
+- Swift ENet control/input establishment is implemented for the Sunshine/Apollo control path
 - TCP fallback and historical non-ENet control variants are still not implemented here
 
 References:
@@ -90,3 +90,12 @@ Current runtime handling:
 - Sunshine ping probe encoding
 - UDP video probe send on a live loopback socket
 - bootstrap path through `MoonlightClient.openSession()`
+
+## Swift ENet connection
+
+The control session and `ChannelSocketFactory.makeSockets` are now async.
+The factory waits for connect/verify and queues the existing startup messages
+before returning. Input and control retain one shared connection actor.
+A failed or cancelled connection closes its socket and wakes its waiters.
+IPv4/IPv6 address resolution and socket readiness are native Apple implementations.
+See [../binary/ENET.md](../binary/ENET.md) for packet behavior and bounds.
