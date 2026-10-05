@@ -383,9 +383,15 @@ public actor SimpleVideoDepacketizer {
     }
 
     private func recoverPendingFECPackets(expectedSequenceNumber: UInt16) -> Bool {
-        guard var observation = currentFECBlock else {
+        // A contiguous packet leaves no queued packet to repair around. Avoid
+        // copying the block's shard dictionary after every healthy packet.
+        guard !pendingPackets.isEmpty, var observation = currentFECBlock else {
             return false
         }
+        let expectedIndex = sequenceDistanceForward(
+            from: observation.lowestSequenceNumber, to: expectedSequenceNumber
+        )
+        guard expectedIndex < Int(observation.dataShardCount) else { return false }
 
         for packet in pendingPackets.values where observation.canRecord(packet) {
             observation.record(packet)

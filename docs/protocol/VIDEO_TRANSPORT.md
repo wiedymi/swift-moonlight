@@ -80,6 +80,7 @@ Current implemented behavior:
 - provides a Moonlight-compatible GF(256) Reed-Solomon core that can recover missing data shards from parity shards in deterministic tests
 - preserves the FEC-protected `NV_VIDEO_PACKET + payload` bytes for video packets
 - provides a tested FEC block recoverer that reconstructs missing data packets from protected bytes, validates recovered header flags, and can feed recovered packets through `SimpleVideoDepacketizer` in synthetic fixtures
+- skips repair dictionary scans when there is no queued later packet or the expected sequence is outside the active block data shards
 - attempts FEC recovery at the missing RTP sequence boundary before declaring a gap unrecoverable, inserting recovered data packets back into the pending depacketizer queue
 - derives the FEC block's base RTP sequence from non-SOF shards too, so a missing first data shard can be recovered before frame assembly starts when enough same-block shards arrive
 - allows `SessionRuntime` to send Sunshine/Apollo frame FEC status reports (`0x5502`) before requesting an IDR after discontinuity
