@@ -176,19 +176,24 @@ public actor BoundUDPSocket {
     private func waitForReadiness() async {
         let id = UUID()
         await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                if isClosed || Task.isCancelled {
-                    continuation.resume()
-                } else {
-                    readinessWaiters[id] = continuation
-                    if !isReadSourceActive {
-                        isReadSourceActive = true
-                        readSource.resume()
-                    }
-                }
-            }
+            await self.suspendUntilReadable(id)
         } onCancel: {
             Task { await self.resumeWaiter(id) }
+        }
+    }
+
+    // An explicit actor call preserves isolation in optimized builds.
+    private func suspendUntilReadable(_ id: UUID) async {
+        await withCheckedContinuation(isolation: self) { continuation in
+            if isClosed || Task.isCancelled {
+                continuation.resume()
+            } else {
+                readinessWaiters[id] = continuation
+                if !isReadSourceActive {
+                    isReadSourceActive = true
+                    readSource.resume()
+                }
+            }
         }
     }
 

@@ -252,6 +252,7 @@ Current runtime behavior:
 - `StreamRuntimeConfiguration.videoPacketTraceLimit` enables a bounded in-memory ring of parsed video packet headers for smoke/debug tools; it defaults to `0` and should stay disabled in normal app runtime paths
 - `MoonlightSession.flushPendingInput()` flushes pending coalesced input through attached senders that support `InputFlushing`; call it before focus/capture transitions when the newest pointer position must be delivered before a later input event or teardown
 - `MoonlightSession.stop()` performs a best-effort pending-input flush before transitioning to stopped; explicit `flushPendingInput()` is still preferred when app code needs to observe transport failures
+- UDP readiness waits enter an explicit actor method before storing their continuation. Release socket checks cover repeated waits, cancellation, and close.
 - `PreparedSessionRuntime.stop()` now tears down both the runtime tasks and the owned channel sockets
 - `MoonlightClient.restartSession(...)` centralizes the stop/cancel/relaunch sequence used for app-driven restarts. It validates the replacement configuration before stopping the old runtime, optionally sends host cancel, opens a replacement session, and prepares but does not start its runtime.
 - `SessionRuntime` now pushes observed control/video/audio counters back into `session.metrics`, so app code and headless tests can use the session metric stream as the primary runtime-observation surface
