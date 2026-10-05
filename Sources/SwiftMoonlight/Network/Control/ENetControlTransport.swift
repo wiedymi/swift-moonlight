@@ -92,7 +92,9 @@ fileprivate actor ENetConnection {
         let metrics = await client.snapshotMetrics()
         return .init(isConnected: metrics.isConnected, roundTripTimeMs: metrics.roundTripTimeMs,
                      roundTripTimeVarianceMs: metrics.roundTripTimeVarianceMs,
-                     packetLossRatio: metrics.packetLossRatio, packetLossVarianceRatio: metrics.packetLossVarianceRatio)
+                     packetLossRatio: metrics.packetLossRatio, packetLossVarianceRatio: metrics.packetLossVarianceRatio,
+                     queuedSendBytes: metrics.queuedSendBytes, inFlightSendBytes: metrics.inFlightSendBytes,
+                     discardedSocketDatagrams: metrics.discardedSocketDatagrams)
     }
     func close(error: (any Error)? = nil) async { pingTask?.cancel(); pingTask = nil; await client.close(throwing: error) }
 }

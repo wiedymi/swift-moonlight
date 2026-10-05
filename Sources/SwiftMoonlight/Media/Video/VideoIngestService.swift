@@ -23,6 +23,8 @@ public actor VideoIngestService {
     private let pipeline: MediaPipeline
     private let packetTraceLimit: Int
     private let pipelineSubmissionMode: VideoPipelineSubmissionMode
+    private var packetBatch: [Data] = []
+    private var packetIndex = 0
     private var observedPacketCount = 0
     private var recoverableDecodeFailureCount = 0
     private var packetTrace: [VideoPacketTraceEntry] = []
@@ -52,7 +54,15 @@ public actor VideoIngestService {
     public func receiveNextFrame() async throws -> EncodedVideoFrame? {
         try throwPendingPipelineErrorIfNeeded()
 
-        while let packetData = try await source.receivePacket() {
+        while !Task.isCancelled {
+            if packetIndex == packetBatch.count {
+                packetBatch = try await source.receivePackets(maximumCount: 64)
+                packetIndex = 0
+                if packetBatch.isEmpty { break }
+            }
+            let packetData = packetBatch[packetIndex]
+            packetBatch[packetIndex] = Data()
+            packetIndex += 1
             try throwPendingPipelineErrorIfNeeded()
             if let frame = try await processVideoPacketData(packetData) {
                 try await submitVideoFrameToPipeline(frame)
@@ -65,6 +75,8 @@ public actor VideoIngestService {
     }
 
     public func flushForKeyframeRequest() async {
+        packetBatch.removeAll(keepingCapacity: true)
+        packetIndex = 0
         for task in inFlightPipelineTasks {
             task.cancel()
         }

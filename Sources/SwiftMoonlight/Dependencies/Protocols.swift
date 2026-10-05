@@ -118,6 +118,16 @@ public protocol ClosableTransport: Sendable {
 
 public protocol MediaPacketSource: Sendable {
     func receivePacket() async throws -> Data?
+    /// Wait for one packet, then return up to maximumCount packets already available.
+    /// An empty result means the source ended. Do not wait to fill the batch.
+    func receivePackets(maximumCount: Int) async throws -> [Data]
+}
+
+public extension MediaPacketSource {
+    func receivePackets(maximumCount: Int) async throws -> [Data] {
+        guard maximumCount > 0, let packet = try await receivePacket() else { return [] }
+        return [packet]
+    }
 }
 
 public protocol MediaKeepaliveSource: MediaPacketSource {

@@ -82,6 +82,10 @@ public actor UDPChannelPacketSource: MediaKeepaliveSource, LocalPortReporting, C
         try await socket.receivePacket()
     }
 
+    public func receivePackets(maximumCount: Int) async throws -> [Data] {
+        try await socket.receivePackets(maximumCount: maximumCount)
+    }
+
     public func localPort() async throws -> UInt16 {
         try await socket.localPort()
     }

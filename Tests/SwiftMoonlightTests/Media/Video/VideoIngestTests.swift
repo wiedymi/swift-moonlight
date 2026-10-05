@@ -322,3 +322,38 @@ private actor BlockingFirstVideoDecoder: VideoDecoder {
         continuation = nil
     }
 }
+
+private actor BatchVideoSource: MediaPacketSource {
+    private var packets: [Data]
+    private(set) var batchReads = 0
+    init(packets: [Data]) { self.packets = packets }
+    func receivePacket() -> Data? { nil }
+    func receivePackets(maximumCount: Int) -> [Data] {
+        batchReads += 1
+        let result = Array(packets.prefix(maximumCount))
+        packets.removeFirst(result.count)
+        return result
+    }
+}
+
+@Test func videoBatchPreservesFramesAcrossReadBoundaries() async throws {
+    var packets: [Data] = []
+    let flags = VideoPacketHeader.startOfFrameFlag | VideoPacketHeader.endOfFrameFlag
+    for index in 1...130 {
+        var payload = Data(repeating: 0, count: 8)
+        payload.append(UInt8(index))
+        packets.append(makeVideoPacket(sequenceNumber: UInt16(index), timestamp: UInt32(index),
+            streamPacketIndex: UInt32(index), frameIndex: UInt32(index), flags: flags, payload: payload))
+    }
+    let source = BatchVideoSource(packets: packets)
+    let pipeline = MediaPipeline()
+    try await pipeline.attachVideoDecoder(RecordingVideoDecoder())
+    let service = VideoIngestService(source: source,
+        depacketizer: SimpleVideoDepacketizer(configuration: .init(codec: .hevc, dimensions: CGSize(width: 640, height: 360))),
+        pipeline: pipeline)
+    var payloads: [Data] = []
+    while let frame = try await service.receiveNextFrame() { payloads.append(frame.payload) }
+    #expect(payloads == (1...130).map { Data([UInt8($0)]) })
+    #expect(await source.batchReads == 4)
+    #expect(await service.snapshotObservedPacketCount() == 130)
+}

@@ -83,7 +83,7 @@ Current implemented behavior:
 - skips repair dictionary scans when there is no queued later packet or the expected sequence is outside the active block data shards
 - attempts FEC recovery at the missing RTP sequence boundary before declaring a gap unrecoverable, inserting recovered data packets back into the pending depacketizer queue
 - derives the FEC block's base RTP sequence from non-SOF shards too, so a missing first data shard can be recovered before frame assembly starts when enough same-block shards arrive
-- allows `SessionRuntime` to send Sunshine/Apollo frame FEC status reports (`0x5502`) before requesting an IDR after discontinuity
+- allows `SessionRuntime` to queue bounded Sunshine/Apollo frame FEC status reports (`0x5502`) independently of video reads
 - extracts Sunshine/Apollo host processing latency from first-packet frame headers when present
 - extracts codec parameter sets from Annex B payloads and caches them across frames for decoder reconfiguration
 - forwards completed `EncodedVideoFrame` values into `MediaPipeline`
@@ -127,7 +127,7 @@ Current implementation detail:
 - after a completed frame, a later SOF packet advances the depacketizer immediately even when the RTP gap is smaller than the generic reorder window; skipped post-frame parity is ignored, while skipped frame indexes remain visible as discontinuities
 - without FEC-block metadata, the missing-packet counter records the distance from the next expected RTP sequence number to the first pending packet that forces the discontinuity
 - `SessionRuntime` now surfaces those discontinuities as session warnings to support recovery handling in app or harness code
-- when FEC block metadata is available, `SessionRuntime` now sends a best-effort frame FEC status packet on the generic control channel before keyframe recovery
+- when FEC block metadata is available, `SessionRuntime` queues a best-effort frame FEC status packet on the generic control channel; pending urgent keyframe requests take precedence
 - when a control channel is available, `SessionRuntime` now also sends an IDR request (`0x0302`) on the urgent control channel after video discontinuity is detected
 
 Observed note:
@@ -184,3 +184,36 @@ products with polynomial arithmetic and cover large, empty, and missing shards.
 The configured reorder window remains the limit for packets without valid repair metadata. When the next missing packet is a data shard in an active Reed-Solomon block, the effective window also covers the remaining data and parity shards in that block. The block must contain at most 255 total shards, matching the repair codec limit. This prevents a large frame from being discarded before its repair packets arrive. The pending packet bound uses this same derived window; no extra packet history is saved.
 
 An unrecoverable block still advances when a later packet exceeds that bounded window. Sequence comparisons retain 16-bit wrap handling. Invalid block sizes cannot extend the window.
+
+## High bitrate read and recovery work
+
+The native video source waits for one datagram and drains at most 64 available
+datagrams in one actor call. It never waits to fill the batch. Custom packet
+sources retain their one-packet behavior through the default batch method.
+Video ingest keeps the unread part of one batch across frame returns, then
+releases each consumed packet. A keyframe reset discards that unread stale batch.
+The kernel receive capacity can be queried without host or packet data. If the
+preferred capacity is rejected, socket setup tries smaller capacities and keeps
+the system default when none are accepted. No queue limit is increased.
+
+Recovery sends run in one active task, outside the video read loop. At most
+16 FEC reports wait; newer reports replace the oldest when the queue is full.
+A monotonic one-second cooldown coalesces keyframe requests. A pending keyframe
+request precedes unsent advisory reports. Video state is cleared before sending
+the request, so a fast host response is not cleared afterwards. Stop cancels
+this task and removes pending reports. No warning or success count is published
+after a canceled send. Transport metric reads also run outside the video and
+audio loops; a separate 100 ms task, the control loop, and explicit runtime snapshots refresh
+them. The extra periodic task preserves fresh HUD values when the host sends no
+application control messages. It adds a small fixed scheduling cost.
+
+This reduces recovery-induced read delay. It cannot create link capacity or
+bypass the host's negotiated ENet reliable window. Live frame timing still
+requires a host and device check.
+
+A separate 100 ms recovery monitor observes discontinuities and decode failures
+while `receiveNextFrame()` is waiting. This avoids waiting for a complete frame
+before requesting repair when every frame is incomplete. It shares the same
+observation counters with the frame loop and updates them before suspension.
+Older snapshots cannot reduce these counters. The monitor adds a small fixed
+polling cost, is canceled on stop, and does not await control sends.

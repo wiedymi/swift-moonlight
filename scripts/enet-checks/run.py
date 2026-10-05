@@ -88,10 +88,14 @@ def main():
     parser.add_argument('--swift-baseline', type=Path, help='Folder with saved ENet Swift source files for a third comparison')
     parser.add_argument('--enet-source', type=Path, default=ROOT / '.build/checkouts/swift-enet', help='SwiftENet package checkout used by the current transport')
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--video-bitrate', type=int, default=0, help='Concurrent loopback UDP Mbps; 0 disables')
+    parser.add_argument('--video-duration', type=int, default=3)
     parser.add_argument('--moonlight-host', action='store_true')
     parser.add_argument('--channels', type=int, choices=range(1, 49), default=48)
     parser.add_argument('--scenario', action='append', choices=['loopback', 'unreliable', 'encrypted', 'fragmented', 'loss-delay-reorder'])
     args = parser.parse_args()
+    if not 0 <= args.video_bitrate <= 200 or not 1 <= args.video_duration <= 60:
+        parser.error("Video rate or duration outside supported range")
     if not 1 <= args.count <= 200000 or not 1 <= args.fragment_count <= 200000 or not 1 <= args.repeats <= 10:
         parser.error('count/repeats outside supported bounds')
     if not 0 <= args.rate <= 10000:
@@ -146,6 +150,8 @@ def main():
         sources = [str(common), str(ROOT / 'scripts/enet-checks/Driver.swift'),
                    str(ROOT / 'Sources/SwiftMoonlight/Core/ControlTransportMetricsSnapshot.swift'),
                    str(ROOT / 'Sources/SwiftMoonlight/Core/Errors.swift'),
+                   str(ROOT / 'Sources/SwiftMoonlight/Network/UDP/BoundUDPSocket.swift'),
+                   str(ROOT / 'Sources/SwiftMoonlight/Network/UDP/UDPSocketAddressing.swift'),
                    str(ROOT / 'Sources/SwiftMoonlight/Protocol/Control/ControlPacketCrypto.swift')]
         enet_sources = sorted((args.enet_source / 'Sources/SwiftENet').glob('*.swift'))
         if not enet_sources:
@@ -190,10 +196,11 @@ def main():
                             port = proxy.port
                         count = min(args.count, 500) if drop else min(args.count, args.fragment_count) if size > 4096 else args.count
                         line = subprocess.check_output([str(executables[label]), str(port), str(count), str(size),
-                                                        str(int(reliable)), str(int(encrypted)), str(args.width or width), label, str(args.rate)], timeout=75, text=True)
+                                                        str(int(reliable)), str(int(encrypted)), str(args.width or width), label, str(args.rate), str(args.video_bitrate), str(args.video_duration)], timeout=120, text=True)
                         result = json.loads(line)
                         result.update(scenario=scenario, repeat=repeat, hostReference=host_reference, channels=args.channels,
-                                      ratePerSecond=args.rate, width=args.width or width)
+                                      ratePerSecond=args.rate, width=args.width or width,
+                                      videoBitrateMbps=args.video_bitrate, videoDurationSeconds=args.video_duration)
                         results.append(result)
                         print(json.dumps(result, sort_keys=True), flush=True)
                     finally:
@@ -201,7 +208,7 @@ def main():
                             proxy.close()
                         server.terminate(); server.wait(timeout=5); server.stdout.close()
     if args.output:
-        production_sources = [ROOT / 'Sources/SwiftMoonlight/Network/Control/ENetControlTransport.swift']
+        production_sources = [ROOT / 'Sources/SwiftMoonlight/Network/Control/ENetControlTransport.swift', ROOT / 'Sources/SwiftMoonlight/Network/UDP/BoundUDPSocket.swift']
         hashes = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in production_sources}
         hashes.update({'SwiftENet/' + p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in enet_sources})
         metadata = {

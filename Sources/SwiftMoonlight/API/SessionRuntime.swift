@@ -34,6 +34,9 @@ public struct RuntimeObservationSnapshot: Sendable, Equatable {
     public var controlRoundTripTimeVarianceMs: Int?
     public var controlPacketLossRatio: Double?
     public var controlPacketLossVarianceRatio: Double?
+    public var controlQueuedSendBytes: Int?
+    public var controlInFlightSendBytes: Int?
+    public var controlDiscardedSocketDatagrams: UInt64?
     public var videoPacketsObserved: Int
     public var audioPacketsObserved: Int
     public var audioConcealmentPackets: Int
@@ -54,6 +57,9 @@ public struct RuntimeObservationSnapshot: Sendable, Equatable {
         controlRoundTripTimeVarianceMs: Int? = nil,
         controlPacketLossRatio: Double? = nil,
         controlPacketLossVarianceRatio: Double? = nil,
+        controlQueuedSendBytes: Int? = nil,
+        controlInFlightSendBytes: Int? = nil,
+        controlDiscardedSocketDatagrams: UInt64? = nil,
         videoPacketsObserved: Int = 0,
         audioPacketsObserved: Int = 0,
         audioConcealmentPackets: Int = 0,
@@ -73,6 +79,9 @@ public struct RuntimeObservationSnapshot: Sendable, Equatable {
         self.controlRoundTripTimeVarianceMs = controlRoundTripTimeVarianceMs
         self.controlPacketLossRatio = controlPacketLossRatio
         self.controlPacketLossVarianceRatio = controlPacketLossVarianceRatio
+        self.controlQueuedSendBytes = controlQueuedSendBytes
+        self.controlInFlightSendBytes = controlInFlightSendBytes
+        self.controlDiscardedSocketDatagrams = controlDiscardedSocketDatagrams
         self.videoPacketsObserved = videoPacketsObserved
         self.audioPacketsObserved = audioPacketsObserved
         self.audioConcealmentPackets = audioConcealmentPackets
@@ -100,10 +109,26 @@ public actor SessionRuntime {
     private var controlTask: Task<Void, Never>?
     private var videoTask: Task<Void, Never>?
     private var audioTask: Task<Void, Never>?
+    private var recoveryMonitorTask: Task<Void, Never>?
+    private var controlMetricsTask: Task<Void, Never>?
+    private var feedbackTask: Task<Void, Never>?
+    private var pendingFECStatuses: [VideoFrameFECStatus] = []
+    private enum KeyframeReason {
+        case startup, discontinuity, decodeFailure, decoderPriming
+        var warning: String? {
+            switch self {
+            case .startup: nil
+            case .discontinuity: "Video discontinuity detected; requested a new keyframe"
+            case .decodeFailure: "Video decoder rejected bad frame data; requested a new keyframe"
+            case .decoderPriming: "Video decoder has not produced frames yet; requested a new keyframe"
+            }
+        }
+    }
+    private var pendingKeyframe: KeyframeReason?
     private var requestedStartupIDR = false
     private var requestedDecoderPrimingIDR = false
-    private var lastIDRRequestTime: Date?
-    private static let idrRequestCooldown: TimeInterval = 1.0
+    private var lastIDRRequestTime: ContinuousClock.Instant?
+    private static let idrRequestCooldown: Duration = .seconds(1)
     private static let mediaMetricsPublishInterval: TimeInterval = 0.1
 
     public init(
@@ -121,16 +146,20 @@ public actor SessionRuntime {
     }
 
     public func start() {
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, controlTask == nil, videoTask == nil, audioTask == nil, feedbackTask == nil else { return }
         if let controlService {
             controlTask = Task {
                 await runControlLoop(service: controlService)
             }
+            controlMetricsTask = Task { await runControlMetricsLoop(service: controlService) }
         }
 
         if let videoService {
             videoTask = Task {
                 await runVideoLoop(service: videoService)
+            }
+            if controlService != nil {
+                recoveryMonitorTask = Task { await runRecoveryMonitor(service: videoService) }
             }
         }
 
@@ -142,9 +171,16 @@ public actor SessionRuntime {
     }
 
     public func stop() async {
+        recoveryMonitorTask?.cancel()
+        recoveryMonitorTask = nil
+        controlMetricsTask?.cancel()
+        controlMetricsTask = nil
         controlTask?.cancel()
         videoTask?.cancel()
         audioTask?.cancel()
+        feedbackTask?.cancel()
+        pendingFECStatuses.removeAll()
+        pendingKeyframe = nil
         controlTask = nil
         videoTask = nil
         audioTask = nil
@@ -207,6 +243,64 @@ public actor SessionRuntime {
         }
     }
 
+    private func runControlMetricsLoop(service: ControlChannelService) async {
+        while !Task.isCancelled {
+            await refreshControlTransportMetrics(from: service)
+            guard !Task.isCancelled else { return }
+            await session.updateRuntimeMetrics(
+                controlRoundTripTimeMs: observation.controlRoundTripTimeMs,
+                controlRoundTripTimeVarianceMs: observation.controlRoundTripTimeVarianceMs,
+                controlPacketLossRatio: observation.controlPacketLossRatio,
+                controlPacketLossVarianceRatio: observation.controlPacketLossVarianceRatio
+            )
+            do { try await Task.sleep(for: .milliseconds(100)) }
+            catch { return }
+        }
+    }
+
+    private func runRecoveryMonitor(service: VideoIngestService) async {
+        while !Task.isCancelled {
+            let snapshot = await service.snapshot()
+            guard !Task.isCancelled else { return }
+            await observeVideoRecovery(snapshot, service: service)
+            if snapshot.observedPacketCount >= 120 && !requestedDecoderPrimingIDR {
+                let stats = await session.mediaPipelineHandle().snapshot()
+                if stats.decodedVideoFrames == 0 && !Task.isCancelled {
+                    requestedDecoderPrimingIDR = queueKeyframe(.decoderPriming)
+                }
+            }
+            do { try await Task.sleep(for: .milliseconds(100)) }
+            catch { return }
+        }
+    }
+
+    private func observeVideoRecovery(_ snapshot: VideoIngestSnapshot, service: VideoIngestService) async {
+        guard !Task.isCancelled else { return }
+        let lostFrame = snapshot.discontinuityCount > observation.videoDiscontinuityEvents
+        let badDecode = snapshot.recoverableDecodeFailureCount > observation.recoverableVideoDecodeFailures
+        // Update before suspension so the frame loop and monitor cannot report
+        // the same event twice. Older snapshots cannot reduce these counters.
+        if snapshot.observedPacketCount >= observation.videoPacketsObserved {
+            observation.videoPacketsObserved = snapshot.observedPacketCount
+            observation.videoPacketTrace = snapshot.packetTrace
+        }
+        observation.missingVideoPackets = max(observation.missingVideoPackets, snapshot.missingPacketCount)
+        observation.reorderedVideoPackets = max(observation.reorderedVideoPackets, snapshot.reorderedPacketCount)
+        observation.videoDiscontinuityEvents = max(observation.videoDiscontinuityEvents, snapshot.discontinuityCount)
+        observation.recoverableVideoDecodeFailures = max(observation.recoverableVideoDecodeFailures, snapshot.recoverableDecodeFailureCount)
+        if lostFrame {
+            queueKeyframe(.discontinuity)
+            if controlService != nil {
+                let statuses = await service.drainPendingFrameFECStatuses()
+                guard !Task.isCancelled else { return }
+                pendingFECStatuses.append(contentsOf: statuses)
+                if pendingFECStatuses.count > 16 { pendingFECStatuses.removeFirst(pendingFECStatuses.count - 16) }
+                startFeedbackIfNeeded()
+            }
+        }
+        if badDecode { queueKeyframe(.decodeFailure) }
+    }
+
     private func runVideoLoop(service: VideoIngestService) async {
         var lastMetricsPublishTime: Date?
         while !Task.isCancelled {
@@ -222,40 +316,11 @@ public actor SessionRuntime {
                 let shouldPublishMetrics = frame == nil || lastMetricsPublishTime.map {
                     now.timeIntervalSince($0) >= Self.mediaMetricsPublishInterval
                 } ?? true
-                if discontinuityCount > observation.videoDiscontinuityEvents {
-                    if let controlService {
-                        let fecStatuses = await service.drainPendingFrameFECStatuses()
-                        for status in fecStatuses {
-                            do {
-                                try await controlService.sendFrameFECStatus(
-                                    status,
-                                    encryption: configuration.controlEncryption
-                                )
-                                observation.videoFrameFECStatusReports += 1
-                            } catch {
-                                await session.warn(.init("Video discontinuity detected; failed to send FEC status"))
-                                break
-                            }
-                        }
-                    }
-                    await requestIDRFrameIfNeeded(warningMessage: "Video discontinuity detected; requested a new keyframe")
-                }
-                if recoverableDecodeFailureCount > observation.recoverableVideoDecodeFailures {
-                    await requestIDRFrameIfNeeded(warningMessage: "Video decoder rejected bad frame data; requested a new keyframe")
-                }
-                observation.videoPacketsObserved = observedCount
-                observation.missingVideoPackets = missingCount
-                observation.reorderedVideoPackets = reorderedCount
-                observation.videoDiscontinuityEvents = discontinuityCount
-                observation.recoverableVideoDecodeFailures = recoverableDecodeFailureCount
-                observation.videoPacketTrace = videoSnapshot.packetTrace
+                await observeVideoRecovery(videoSnapshot, service: service)
 
                 if shouldPublishMetrics {
                     lastMetricsPublishTime = now
                     let pipelineStats = await session.mediaPipelineHandle().snapshot()
-                    if let controlService {
-                        await refreshControlTransportMetrics(from: controlService)
-                    }
                     await session.updateRuntimeMetrics(
                         controlRoundTripTimeMs: observation.controlRoundTripTimeMs,
                         controlRoundTripTimeVarianceMs: observation.controlRoundTripTimeVarianceMs,
@@ -282,8 +347,7 @@ public actor SessionRuntime {
                        observedCount >= 120,
                        !requestedDecoderPrimingIDR
                     {
-                        requestedDecoderPrimingIDR = true
-                        await requestIDRFrame(warningMessage: "Video decoder has not produced frames yet; requested a new keyframe")
+                        requestedDecoderPrimingIDR = queueKeyframe(.decoderPriming)
                     }
                 }
                 if frame == nil {
@@ -318,9 +382,6 @@ public actor SessionRuntime {
                     observation.audioConcealmentPackets = concealmentCount
                     observation.missingAudioPackets = missingCount
                     observation.reorderedAudioPackets = reorderedCount
-                    if let controlService {
-                        await refreshControlTransportMetrics(from: controlService)
-                    }
                     await session.updateRuntimeMetrics(
                         controlRoundTripTimeMs: observation.controlRoundTripTimeMs,
                         controlRoundTripTimeVarianceMs: observation.controlRoundTripTimeVarianceMs,
@@ -391,12 +452,15 @@ public actor SessionRuntime {
         observation.controlRoundTripTimeVarianceMs = metrics.roundTripTimeVarianceMs
         observation.controlPacketLossRatio = metrics.packetLossRatio
         observation.controlPacketLossVarianceRatio = metrics.packetLossVarianceRatio
+        observation.controlQueuedSendBytes = metrics.queuedSendBytes
+        observation.controlInFlightSendBytes = metrics.inFlightSendBytes
+        observation.controlDiscardedSocketDatagrams = metrics.discardedSocketDatagrams
     }
 
     private func handle(controlMessage: ControlMessage) async {
         if videoService != nil, !requestedStartupIDR {
             requestedStartupIDR = true
-            await requestIDRFrame(warningMessage: nil)
+            queueKeyframe(.startup)
         }
 
         switch controlMessage {
@@ -461,30 +525,56 @@ public actor SessionRuntime {
         }
     }
 
-    private func requestIDRFrameIfNeeded(warningMessage: String) async {
-        let now = Date()
-        let shouldRequest = lastIDRRequestTime.map { now.timeIntervalSince($0) >= Self.idrRequestCooldown } ?? true
-        guard shouldRequest else {
-            return
-        }
-
+    @discardableResult
+    private func queueKeyframe(_ reason: KeyframeReason) -> Bool {
+        guard controlService != nil, !Task.isCancelled else { return false }
+        let now = ContinuousClock().now
+        guard lastIDRRequestTime.map({ $0.duration(to: now) >= Self.idrRequestCooldown }) ?? true else { return false }
         lastIDRRequestTime = now
-        await requestIDRFrame(warningMessage: warningMessage)
+        pendingKeyframe = reason
+        startFeedbackIfNeeded()
+        return true
+    }
+
+    private func startFeedbackIfNeeded() {
+        guard feedbackTask == nil, !Task.isCancelled else { return }
+        feedbackTask = Task { await runFeedbackLoop() }
+    }
+
+    private func runFeedbackLoop() async {
+        defer { feedbackTask = nil }
+        guard let controlService else { return }
+        while !Task.isCancelled {
+            // Keyframe recovery takes precedence over advisory loss reports.
+            if let reason = pendingKeyframe {
+                pendingKeyframe = nil
+                await requestIDRFrame(warningMessage: reason.warning)
+            } else if !pendingFECStatuses.isEmpty {
+                let status = pendingFECStatuses.removeFirst()
+                do {
+                    try await controlService.sendFrameFECStatus(status, encryption: configuration.controlEncryption)
+                    if !Task.isCancelled { observation.videoFrameFECStatusReports += 1 }
+                } catch {
+                    if !Task.isCancelled { await session.warn(.init("Video discontinuity detected; failed to send FEC status")) }
+                }
+            } else { return }
+        }
     }
 
     private func requestIDRFrame(warningMessage: String?) async {
         guard let controlService else { return }
 
         do {
-            try await controlService.requestIDRFrame(encryption: configuration.controlEncryption)
-            // Flush the depacketizer so stale sequence state doesn't cause us to
-            // miss the incoming keyframe. The IDR will be the next frame from the
-            // encoder, and we need to capture it from its very first packet.
+            // Clear stale sequence state before the host can send its keyframe.
             await videoService?.flushForKeyframeRequest()
+            try Task.checkCancellation()
+            try await controlService.requestIDRFrame(encryption: configuration.controlEncryption)
+            try Task.checkCancellation()
             if let warningMessage {
                 await session.warn(.init(warningMessage))
             }
         } catch {
+            guard !Task.isCancelled else { return }
             let errorDetail = (error as? MoonlightError)?.message ?? error.localizedDescription
             if let warningMessage {
                 await session.warn(.init("\(warningMessage.replacingOccurrences(of: "requested", with: "failed to request")): \(errorDetail)"))

@@ -39,7 +39,10 @@ public actor BoundUDPSocket {
         // The default macOS UDP receive buffer is too small for video streams,
         // causing packet loss between socket creation and receive loop start.
         var rcvBufSize: Int32 = 2048 * 1500
-        setsockopt(socketFD, SOL_SOCKET, SO_RCVBUF, &rcvBufSize, socklen_t(MemoryLayout<Int32>.size))
+        while setsockopt(socketFD, SOL_SOCKET, SO_RCVBUF, &rcvBufSize, socklen_t(MemoryLayout<Int32>.size)) != 0,
+              rcvBufSize > 192_000 {
+            rcvBufSize /= 2
+        }
 
         let flags = fcntl(socketFD, F_GETFL, 0)
         if flags == -1 || fcntl(socketFD, F_SETFL, flags | O_NONBLOCK) == -1 {
@@ -140,11 +143,11 @@ public actor BoundUDPSocket {
             if received > 0 {
                 return Data(receiveBuffer.prefix(received))
             }
-            if received == 0 {
-                return nil
-            }
+            if received == 0 { continue } // An empty datagram is not a socket close.
 
             switch errno {
+            case EINTR:
+                continue
             case EWOULDBLOCK, EAGAIN:
                 await waitForReadiness()
                 continue
@@ -157,6 +160,31 @@ public actor BoundUDPSocket {
         }
 
         return nil
+    }
+
+    /// Drain at most 64 datagrams without waiting for a full batch.
+    public func receivePackets(maximumCount: Int) async throws -> [Data] {
+        let limit = min(64, max(0, maximumCount))
+        guard limit > 0, let first = try await receivePacket() else { return [] }
+        var packets = [first]
+        for _ in 1..<limit {
+            guard !isClosed && !Task.isCancelled else { break }
+            let received = recv(socketFD, &receiveBuffer, receiveBuffer.count, 0)
+            if received < 0 { break } // The next read handles readiness or the error.
+            if received > 0 { packets.append(Data(receiveBuffer.prefix(received))) }
+        }
+        return packets
+    }
+
+    /// Kernel-selected capacity, in bytes. No host or packet data is included.
+    public func receiveBufferCapacity() throws -> Int {
+        guard !isClosed else { return 0 }
+        var capacity: Int32 = 0
+        var length = socklen_t(MemoryLayout<Int32>.size)
+        guard getsockopt(socketFD, SOL_SOCKET, SO_RCVBUF, &capacity, &length) == 0 else {
+            throw MoonlightError(.unsupportedOperation, message: "Failed to query UDP receive capacity")
+        }
+        return max(0, Int(capacity))
     }
 
     public func close() {

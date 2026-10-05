@@ -57,3 +57,19 @@ private enum SendError: Error {
     case invalidAddress
     case sendFailed
 }
+
+@Test func boundSocketBatchIsBoundedAndPreservesPacketOrder() async throws {
+    let socket = try BoundUDPSocket(remoteHost: "127.0.0.1", remotePort: 9)
+    let source = UDPChannelPacketSource(socket: socket)
+    let port = try await source.localPort()
+    try sendUDPDatagram(Data(), to: port)
+    for index in 0..<80 { try sendUDPDatagram(Data([UInt8(index)]), to: port) }
+    let first = try await source.receivePackets(maximumCount: 500)
+    let second = try await source.receivePackets(maximumCount: 64)
+    #expect(first.count == 64)
+    #expect(second.count == 16)
+    #expect(first + second == (0..<80).map { Data([UInt8($0)]) })
+    #expect(try await socket.receiveBufferCapacity() > 0)
+    await source.close()
+    #expect(try await source.receivePackets(maximumCount: 64).isEmpty)
+}

@@ -317,10 +317,26 @@ func sessionRuntimeStopsOnTerminationMessage() async throws {
     let control = ControlChannelService(transport: controlTransport, logger: TestLogger())
     let runtime = SessionRuntime(session: session, controlService: control)
 
+    let events = await session.events
     await runtime.start()
-    try await Task.sleep(for: .milliseconds(20))
-
+    let stopped = await withTaskGroup(of: Bool.self) { group in
+        group.addTask {
+            for await event in events {
+                if case .stateChanged(.stopped) = event { return true }
+            }
+            return false
+        }
+        group.addTask {
+            try? await Task.sleep(for: .seconds(1))
+            return false
+        }
+        let result = await group.next() ?? false
+        group.cancelAll()
+        return result
+    }
+    #expect(stopped)
     #expect(await session.currentState == .stopped)
+    await runtime.stop()
 }
 
 @Test
@@ -1086,4 +1102,81 @@ private func makeRuntimeAudioPacket(
     data.append(contentsOf: [0,0,0,2])
     data.append(payload)
     return data
+}
+
+private actor HeldRecoveryTransport: ControlChannelTransport {
+    private var blockedSend: CheckedContinuation<Void, Never>?
+    private(set) var sendCount = 0
+    func send(packet: Data, channelID: UInt8, reliable: Bool) async throws {
+        sendCount += 1
+        await withCheckedContinuation { blockedSend = $0 }
+    }
+    func receivePacket() -> Data? { nil }
+    func release() { blockedSend?.resume(); blockedSend = nil }
+}
+
+@Test func slowRecoverySendDoesNotStopVideoReads() async throws {
+    let session = MoonlightSession()
+    try await session.attachVideoDecoder(FailingVideoDecoder(
+        error: MoonlightError(.unsupportedOperation, message: "VideoToolbox decode failed: -12909")
+    ))
+    try await session.configureVideo(format: .init(codec: .hevc, dimensions: CGSize(width: 640, height: 360)))
+    let transport = HeldRecoveryTransport()
+    let source = FixtureMediaPacketSource(packets: (1...100).map { index in
+        makeRuntimeVideoPacket(sequenceNumber: UInt16(index), timestamp: UInt32(index * 33),
+            streamPacketIndex: UInt32(index), frameIndex: UInt32(index),
+            flags: VideoPacketHeader.startOfFrameFlag | VideoPacketHeader.endOfFrameFlag,
+            payload: Data([0, 0, 0, 0, 0, 0, 0, 0, 0x99]))
+    })
+    let video = VideoIngestService(source: source,
+        depacketizer: SimpleVideoDepacketizer(configuration: .init(codec: .hevc, dimensions: CGSize(width: 640, height: 360))),
+        pipeline: await session.mediaPipelineHandle())
+    let runtime = SessionRuntime(session: session,
+        controlService: ControlChannelService(transport: transport, logger: TestLogger()), videoService: video)
+    await runtime.start()
+    for _ in 0..<100 {
+        if await video.snapshotObservedPacketCount() == 100 { break }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    #expect(await video.snapshotObservedPacketCount() == 100)
+    #expect(await transport.sendCount == 1)
+    await runtime.stop()
+    await transport.release()
+}
+
+private actor OpenVideoSource: MediaPacketSource {
+    private var packets: [Data]
+    init(packets: [Data]) { self.packets = packets }
+    func receivePacket() async throws -> Data? {
+        if !packets.isEmpty { return packets.removeFirst() }
+        try await Task.sleep(for: .seconds(30))
+        return nil
+    }
+}
+
+@Test func recoveryIsRequestedWhileNoCompleteVideoFrameArrives() async throws {
+    var packets: [Data] = []
+    for index in 1...160 {
+        packets.append(makeRuntimeVideoPacket(sequenceNumber: UInt16(index * 2), timestamp: UInt32(index),
+            streamPacketIndex: UInt32(index), frameIndex: UInt32(index),
+            flags: VideoPacketHeader.startOfFrameFlag, payload: Data(repeating: 0, count: 8)))
+    }
+    let session = MoonlightSession()
+    let transport = RecordingControlChannelTransport()
+    let video = VideoIngestService(source: OpenVideoSource(packets: packets),
+        depacketizer: SimpleVideoDepacketizer(configuration: .init(codec: .hevc, dimensions: CGSize(width: 640, height: 360), reorderWindowSize: 1)),
+        pipeline: await session.mediaPipelineHandle())
+    let runtime = SessionRuntime(session: session,
+        controlService: ControlChannelService(transport: transport, logger: TestLogger()), videoService: video)
+    await runtime.start()
+    var sent: [(packet: Data, channelID: UInt8, reliable: Bool)] = []
+    for _ in 0..<200 {
+        sent = await transport.recordedSentPackets()
+        if !sent.isEmpty { break }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    #expect(await video.snapshotObservedPacketCount() == 160)
+    #expect(sent.contains { $0.channelID == ControlChannelID.urgent && $0.packet == Data([2, 3, 0, 0]) })
+    #expect(await session.mediaPipelineHandle().snapshot().decodedVideoFrames == 0)
+    await runtime.stop()
 }
