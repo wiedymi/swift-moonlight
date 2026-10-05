@@ -312,3 +312,8 @@ and sample conversion, not network receive, decode, GPU work, or stream FPS.
 VideoToolbox submission enables asynchronous decompression. The caller awaits the
 output callback without blocking a Swift worker. Ordered bounded pipeline
 submission still controls frame order and backpressure.
+
+macOS display-link callbacks now use the requested frame-rate preference, bounded
+to 1-240 FPS. With no preference, the native automatic rate stays in use. The
+system still selects an available display cadence. Idle callbacks skip command
+buffer creation unless a new frame, resize, or transition needs drawing.

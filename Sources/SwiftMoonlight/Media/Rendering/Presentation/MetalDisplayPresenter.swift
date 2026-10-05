@@ -134,6 +134,14 @@ final class MetalDisplayPresenter: NSObject, CAMetalDisplayLinkDelegate, @unchec
             minimum: Float(min(preferred, 30)), maximum: Float(maximum), preferred: Float(preferred)
         )
         #endif
+        #if os(macOS)
+        if let preferredFrameRate {
+            let preferred = Float(min(max(preferredFrameRate, 1), 240))
+            link.preferredFrameRateRange = CAFrameRateRange(
+                minimum: min(preferred, 30), maximum: preferred, preferred: preferred
+            )
+        }
+        #endif
         link.delegate = self
         link.add(to: .main, forMode: .common)
         displayLink = link
@@ -142,11 +150,9 @@ final class MetalDisplayPresenter: NSObject, CAMetalDisplayLinkDelegate, @unchec
     @MainActor func setPreferredFrameRate(_ rate: Int) {
         let rate = min(max(rate, 1), 240)
         preferredFrameRate = rate
-        #if os(iOS)
         displayLink?.preferredFrameRateRange = CAFrameRateRange(
             minimum: Float(min(rate, 30)), maximum: Float(rate), preferred: Float(rate)
         )
-        #endif
     }
 
     @MainActor func stop() {
@@ -163,8 +169,7 @@ final class MetalDisplayPresenter: NSObject, CAMetalDisplayLinkDelegate, @unchec
     func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {
         let pending = takePendingFrame()
 
-        guard let frame = pending.frame, let state = pending.state,
-              let commandBuffer = commandQueue.makeCommandBuffer() else { return }
+        guard let frame = pending.frame, let state = pending.state else { return }
         autoreleasepool {
             let drawable = update.drawable
             let size = CGSize(width: drawable.texture.width, height: drawable.texture.height)
@@ -175,7 +180,8 @@ final class MetalDisplayPresenter: NSObject, CAMetalDisplayLinkDelegate, @unchec
             }
             lastDrawableSize = size
             let opacity = min(pending.opacity, Float(min(max((now - (transitionStartedAt ?? (now - 1))) / 0.25, 0), 1)))
-            guard pending.fresh || resized || opacity != lastPresentationOpacity else { return }
+            guard pending.fresh || resized || opacity != lastPresentationOpacity,
+                  let commandBuffer = commandQueue.makeCommandBuffer() else { return }
             let transform = MetalPresentationTransform.make(
                 contentMode: contentMode, frameDimensions: frame.dimensions, drawableSize: size
             )
