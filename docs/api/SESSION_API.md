@@ -255,6 +255,7 @@ Current runtime behavior:
 - UDP readiness waits enter an explicit actor method before storing their continuation. Release socket checks cover repeated waits, cancellation, and close.
 - `MoonlightSession.stop()` waits for audio and renderer teardown before returning. The pipeline removes playback targets before awaiting teardown, so a pending decode cannot restart playback.
 - `PreparedSessionRuntime.stop()` now tears down both the runtime tasks and the owned channel sockets
+- macOS authenticated host requests wait asynchronously for curl. Cancellation stops the child process, connection setup is limited to 5 seconds, and the full request is limited to 15 seconds. Temporary identity files are removed on success, failure, or cancellation.
 - `MoonlightClient.restartSession(...)` centralizes the stop/cancel/relaunch sequence used for app-driven restarts. It validates the replacement configuration before stopping the old runtime, optionally sends host cancel, opens a replacement session, and prepares but does not start its runtime.
 - `SessionRuntime` now pushes observed control/video/audio counters back into `session.metrics`, so app code and headless tests can use the session metric stream as the primary runtime-observation surface
 - Video runtime metric publication is throttled to avoid doing control RTT refresh and media-pipeline snapshot work after every frame on the UDP receive loop; `SessionRuntime.snapshot()` still queries current counters on demand

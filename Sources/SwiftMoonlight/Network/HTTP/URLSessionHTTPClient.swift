@@ -68,7 +68,7 @@ public struct URLSessionHTTPClient: HTTPClient {
         #if os(macOS)
         if url.scheme?.lowercased() == "https", let httpsClientIdentityProvider {
             if let identity = try await httpsClientIdentityProvider() {
-                return try runCurlAuthenticatedRequest(url: url, headers: headers, identity: identity)
+                return try await runCurlAuthenticatedRequest(url: url, headers: headers, identity: identity)
             }
         }
         #endif
@@ -92,7 +92,8 @@ public struct URLSessionHTTPClient: HTTPClient {
         url: URL,
         headers: [String: String],
         identity: HTTPSClientIdentityMaterial
-    ) throws -> (Data, HTTPURLResponse) {
+    ) async throws -> (Data, HTTPURLResponse) {
+        try Task.checkCancellation()
         let fileManager = FileManager.default
         let tempDirectory = fileManager.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
         try fileManager.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
@@ -112,6 +113,8 @@ public struct URLSessionHTTPClient: HTTPClient {
         var arguments = [
             "--silent",
             "--show-error",
+            "--connect-timeout", "5",
+            "--max-time", "15",
             "--insecure",
             "--cert", certificateURL.path(percentEncoded: false),
             "--key", privateKeyURL.path(percentEncoded: false),
@@ -129,8 +132,7 @@ public struct URLSessionHTTPClient: HTTPClient {
         let errorPipe = Pipe()
         process.standardOutput = outputPipe
         process.standardError = errorPipe
-        try process.run()
-        process.waitUntilExit()
+        try await process.runUntilExit()
 
         let statusData = outputPipe.fileHandleForReading.readDataToEndOfFile()
         let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
