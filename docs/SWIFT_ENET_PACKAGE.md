@@ -1,7 +1,7 @@
 # SwiftENet package integration
 
 SwiftMoonlight uses the public [swift-enet](https://github.com/wiedymi/swift-enet)
-package at revision `4ce4ba7b67b5b0cdfb2c62a4d1048141520d3664` (tag `0.1.0`). The CENet target, dependency, and vendored
+package at revision `173a6a9862a3e06f2041a4ebc115641a3adb968e` (tag `0.2.0`). The CENet target, dependency, and vendored
 C/header files are removed. There is no second embedded Swift ENet engine.
 
 SwiftENet owns the codec, peer state, bounded queues, native UDP socket, reads,
@@ -33,6 +33,15 @@ Swift 6 language mode is explicit in both packages. There are no unsafe build
 flags or custom unchecked Sendable types in SwiftENet. Its MIT license, README,
 wire contract, review record, tests, and macOS CI workflow are included. C
 reference sources and build caches are not part of that package.
+
+## Type names in 0.2.0
+
+The package now uses `Client`, `Packet`, `Delivery`, `Metrics`, and `ClientError`.
+SwiftMoonlight's adapter and wire fixture use the new names. The module name
+provides the ENet context; Moonlight's transport names still identify the protocol.
+This change removes a redundant delivery alias and changes no runtime behavior.
+The performance measurements below describe the published 0.1.0 sources; they
+have not been repeated for this name change.
 
 ## Current performance check
 

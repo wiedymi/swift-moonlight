@@ -7,8 +7,8 @@ public final class ENetControlSession: Sendable {
 
     public init(remoteHost: String, remotePort: UInt16, connectData: UInt32,
                 controlEncryption: ControlEncryptionContext?) async throws {
-        let client: ENetClient
-        do { client = try await ENetClient.connect(host: remoteHost, port: remotePort, connectData: connectData) }
+        let client: Client
+        do { client = try await Client.connect(host: remoteHost, port: remotePort, connectData: connectData) }
         catch { throw transportError(error) }
         connection = ENetConnection(client: client, encryption: controlEncryption)
         do { try await connection.start() }
@@ -26,14 +26,14 @@ public final class ENetControlSession: Sendable {
 }
 
 fileprivate actor ENetConnection {
-    private let client: ENetClient
+    private let client: Client
     nonisolated let encryption: ControlEncryptionContext?
     nonisolated var unownedExecutor: UnownedSerialExecutor { client.unownedExecutor }
     private let crypto = ControlPacketCrypto()
     private var encryptionSequence: UInt64 = 0
     private var pingTask: Task<Void, Never>?
 
-    init(client: ENetClient, encryption: ControlEncryptionContext?) {
+    init(client: Client, encryption: ControlEncryptionContext?) {
         self.client = client; self.encryption = encryption
     }
 
@@ -73,13 +73,13 @@ fileprivate actor ENetConnection {
         let packet: Data
         if let encryption {
             guard payload.count <= 65_511, encryptionSequence <= UInt64(UInt32.max) else {
-                throw ENetError.messageTooLarge
+                throw ClientError.messageTooLarge
             }
             packet = try crypto.seal(packetType: type, payload: payload, sequenceNumber: UInt32(encryptionSequence),
                                      sender: .client, context: encryption)
             encryptionSequence += 1
         } else {
-            guard payload.count <= ENetClient.maximumMessageSize - 2 else { throw ENetError.messageTooLarge }
+            guard payload.count <= Client.maximumMessageSize - 2 else { throw ClientError.messageTooLarge }
             var plain = Data([UInt8(truncatingIfNeeded: type), UInt8(truncatingIfNeeded: type >> 8)])
             plain.append(payload); packet = plain
         }
@@ -136,7 +136,7 @@ public actor ENetInputPacketTransport: InputPacketTransport, LocalPortReporting,
 }
 
 private func transportError(_ error: any Error) -> any Error {
-    guard let error = error as? ENetError else { return error }
+    guard let error = error as? ClientError else { return error }
     switch error {
     case .invalidPacket: return MoonlightError(.invalidControlMessage, message: "Invalid ENet packet")
     case .invalidConnect: return MoonlightError(.networkRequestFailed, message: "ENet connection setup failed")

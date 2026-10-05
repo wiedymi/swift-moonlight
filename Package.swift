@@ -31,7 +31,7 @@ let package = Package(
             targets: ["SwiftMoonlightCapture"]
         ),
     ],
-    dependencies: [.package(url: "https://github.com/wiedymi/swift-enet.git", revision: "4ce4ba7b67b5b0cdfb2c62a4d1048141520d3664")],
+    dependencies: [.package(url: "https://github.com/wiedymi/swift-enet.git", revision: "173a6a9862a3e06f2041a4ebc115641a3adb968e")],
     targets: [
         .target(name: "SwiftMoonlight", dependencies: [.product(name: "SwiftENet", package: "swift-enet")]),
         .target(

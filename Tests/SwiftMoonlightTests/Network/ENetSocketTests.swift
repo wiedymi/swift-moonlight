@@ -8,17 +8,17 @@ import Testing
     let server = try ENetTestListener(host: "::1")
     let host = Task {
         let connect = try await server.receive()
-        let command = try #require(try ENetDatagram.decode(connect.data).commands.first)
-        guard case .connect(var parameters, let data) = command.body else { throw ENetError.invalidConnect }
+        let command = try #require(try Datagram.decode(connect.data).commands.first)
+        guard case .connect(var parameters, let data) = command.body else { throw ClientError.invalidConnect }
         #expect(data == 0x1234)
         parameters.peerID = 9; parameters.incomingSession = 1; parameters.outgoingSession = 2
-        try server.send(ENetDatagram(peerID: 0, sessionID: 1, sentTime: 0,
+        try server.send(Datagram(peerID: 0, sessionID: 1, sentTime: 0,
                                      commands: [.init(sequence: 1, body: .verify(parameters))]).encoded(), to: connect.address)
         var gotStart = false
-        var firstStart: ENetCommand?
+        var firstStart: Command?
         while !gotStart {
             let packet = try await server.receive()
-            let datagram = try ENetDatagram.decode(packet.data)
+            let datagram = try Datagram.decode(packet.data)
             #expect(datagram.peerID == 9)
             #expect(datagram.sessionID == 2)
             for command in datagram.commands {
@@ -34,12 +34,12 @@ import Testing
                     }
                 }
                 if command.requestsAcknowledgement, let time = datagram.sentTime {
-                    try server.send(ENetDatagram(peerID: 0, sessionID: 1, sentTime: nil,
+                    try server.send(Datagram(peerID: 0, sessionID: 1, sentTime: nil,
                                                  commands: [.init(channel: command.channel, body: .acknowledge(sequence: command.sequence, time: time))]).encoded(), to: packet.address)
                 }
             }
         }
-        try server.send(ENetDatagram(peerID: 0, sessionID: 1, sentTime: 1,
+        try server.send(Datagram(peerID: 0, sessionID: 1, sentTime: 1,
                                      commands: [.init(channel: 1, sequence: 1, body: .reliable(Data([9, 8, 7]))) ]).encoded(), to: connect.address)
     }
     let session = try await ENetControlSession(remoteHost: "::1", remotePort: server.port, connectData: 0x1234, controlEncryption: nil)
@@ -75,17 +75,17 @@ private final class ENetTestListener: Sendable {
     init(host: String) throws {
         var hints = addrinfo(); hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_DGRAM; hints.ai_protocol = IPPROTO_UDP
         var result: UnsafeMutablePointer<addrinfo>?
-        guard getaddrinfo(host, "0", &hints, &result) == 0, let result else { throw ENetError.invalidConnect }
+        guard getaddrinfo(host, "0", &hints, &result) == 0, let result else { throw ClientError.invalidConnect }
         defer { freeaddrinfo(result) }
         let fd = Darwin.socket(result.pointee.ai_family, SOCK_DGRAM, IPPROTO_UDP)
-        guard fd >= 0 else { throw ENetError.invalidConnect }
+        guard fd >= 0 else { throw ClientError.invalidConnect }
         guard Darwin.bind(fd, result.pointee.ai_addr, result.pointee.ai_addrlen) == 0,
-              fcntl(fd, F_SETFL, O_NONBLOCK) == 0 else { Darwin.close(fd); throw ENetError.invalidConnect }
+              fcntl(fd, F_SETFL, O_NONBLOCK) == 0 else { Darwin.close(fd); throw ClientError.invalidConnect }
         var address = sockaddr_storage(); var length = socklen_t(MemoryLayout<sockaddr_storage>.size)
         let query = withUnsafeMutablePointer(to: &address) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &length) }
         }
-        guard query == 0 else { Darwin.close(fd); throw ENetError.invalidConnect }
+        guard query == 0 else { Darwin.close(fd); throw ClientError.invalidConnect }
         port = withUnsafePointer(to: address) {
             if Int32(address.ss_family) == AF_INET6 {
                 return $0.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { UInt16(bigEndian: $0.pointee.sin6_port) }
@@ -108,10 +108,10 @@ private final class ENetTestListener: Sendable {
                 let addressBytes = withUnsafeBytes(of: address) { Data($0.prefix(Int(length))) }
                 return Packet(data: Data(bytes.prefix(count)), address: addressBytes)
             }
-            guard errno == EAGAIN || errno == EWOULDBLOCK else { throw ENetError.invalidPacket }
+            guard errno == EAGAIN || errno == EWOULDBLOCK else { throw ClientError.invalidPacket }
             try await Task.sleep(for: .milliseconds(1))
         }
-        throw ENetError.timedOut
+        throw ClientError.timedOut
     }
     func send(_ packet: Data, to address: Data) throws {
         var storage = sockaddr_storage()
@@ -121,6 +121,6 @@ private final class ENetTestListener: Sendable {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { sendto(descriptor, bytes.baseAddress, bytes.count, 0, $0, socklen_t(address.count)) }
             }
         }
-        guard count == packet.count else { throw ENetError.invalidPacket }
+        guard count == packet.count else { throw ClientError.invalidPacket }
     }
 }
