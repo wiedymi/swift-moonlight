@@ -286,7 +286,9 @@ the main actor.
 
 ### Audio playback timing
 
-`SystemAudioSink` collects 20 ms before starting playback and after an empty queue.
+`SystemAudioSink` requires `prepare` before playback. After teardown it drops late
+buffers until explicitly prepared again; playback cannot restart the engine.
+It collects 20 ms before starting playback and after an empty queue.
 It derives queued frames from the player sample clock, without asynchronous buffer
 completion tasks. The queue accepts up to 120 ms, including valid long Opus packets
 and short recovered bursts. This adds about 20 ms at start; device latency is separate.

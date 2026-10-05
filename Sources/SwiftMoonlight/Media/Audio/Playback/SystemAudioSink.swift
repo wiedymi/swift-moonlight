@@ -43,9 +43,6 @@ public actor SystemAudioSink: AudioSink {
 
     public func play(_ buffer: PCMBuffer) async -> AudioPlaybackResult {
         do {
-            if preparedFormat == nil {
-                try await prepare(format: .init(sampleRate: buffer.sampleRate, channelCount: buffer.channelCount))
-            }
             guard let preparedFormat else {
                 return .dropped
             }

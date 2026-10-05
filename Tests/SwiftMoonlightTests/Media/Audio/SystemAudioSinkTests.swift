@@ -77,5 +77,9 @@ func systemAudioSinkBuffersShortPacketsAndUsesRenderedTime() async throws {
     for _ in 0..<3 { #expect(await sink.play(packet) == .accepted) }
     #expect(player.isPlaying)
     await sink.teardown()
+    // A late buffer must not recreate the engine after Disconnect.
+    #expect(await sink.play(packet) == .dropped)
+    #expect(!engine.isRunning)
+    #expect(!player.isPlaying)
 }
 #endif
