@@ -308,3 +308,7 @@ reports the median of five runs of 400 iterations. Temporary sources and binarie
 are removed. On the development Mac, the 187,500-byte synthetic picture measured
 0.209 ms before and 0.014 ms after. These numbers cover parameter-set extraction
 and sample conversion, not network receive, decode, GPU work, or stream FPS.
+
+VideoToolbox submission enables asynchronous decompression. The caller awaits the
+output callback without blocking a Swift worker. Ordered bounded pipeline
+submission still controls frame order and backpressure.

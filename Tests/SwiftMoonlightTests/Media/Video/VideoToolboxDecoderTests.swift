@@ -1,6 +1,7 @@
 #if canImport(VideoToolbox) && canImport(CoreVideo)
 import CoreGraphics
 import CoreVideo
+import Foundation
 import Testing
 @testable import SwiftMoonlight
 
@@ -48,5 +49,23 @@ func videoToolboxDecoderRequestsUncompressedP010ForHDROutput() {
     #expect(attrs[kCVPixelBufferPixelFormatTypeKey] as? OSType == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
     #expect(attrs[kCVPixelBufferMetalCompatibilityKey] as? Bool == true)
     #expect(attrs[kCVPixelBufferIOSurfacePropertiesKey] != nil)
+}
+@Test
+func videoToolboxAsynchronousDecodeReturnsRealFramesInOrder() async throws {
+    let decoder = VideoToolboxDecoder()
+    try await decoder.configure(format: .init(codec: .h264, dimensions: CGSize(width: 64, height: 64)))
+    let payload = try fixtureData(named: "video_h264_64x64.frame")
+    for timestamp in UInt64(1)...20 {
+        let frames = try await decoder.decode(.init(timestamp: timestamp, isKeyFrame: true,
+            codec: .h264, payload: payload))
+        let frame = try #require(frames.first)
+        #expect(frames.count == 1)
+        #expect(frame.timestamp == timestamp)
+        let pixels = try #require(frame.pixelBuffer?.pixelBuffer)
+        #expect(CVPixelBufferGetWidth(pixels) == 64)
+        #expect(CVPixelBufferGetHeight(pixels) == 64)
+        #expect(CVPixelBufferGetPixelFormatType(pixels) == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+    }
+    #expect(try await decoder.flush().isEmpty)
 }
 #endif

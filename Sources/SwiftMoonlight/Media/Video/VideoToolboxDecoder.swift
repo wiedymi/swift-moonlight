@@ -52,7 +52,7 @@ public actor VideoToolboxDecoder: VideoDecoder {
             let status = VTDecompressionSessionDecodeFrame(
                 session,
                 sampleBuffer: sampleBuffer,
-                flags: [],
+                flags: ._EnableAsynchronousDecompression,
                 infoFlagsOut: &infoFlags
             ) { status, _, imageBuffer, presentationTimeStamp, _ in
                 if status != noErr {

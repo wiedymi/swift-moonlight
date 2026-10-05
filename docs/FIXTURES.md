@@ -163,3 +163,11 @@ decoder, with the same frame length as the preceding packets.
 The tests need no external encoder. They allow a maximum difference of 16 signed
 PCM units for codec rounding, while checking every output sample and channel.
 They also check that a new packet can be decoded after a loss.
+
+### Native video decode fixture
+
+`video_h264_64x64.frame` is one black 64 x 64 H.264 keyframe in Annex-B format,
+including SPS and PPS. It was encoded locally with Apple VideoToolbox, with frame
+reordering disabled. It contains no captured desktop content. The decoder test
+submits it repeatedly with distinct timestamps and verifies real NV12 pixel
+buffers and ordered callback completion in Debug and Release.
