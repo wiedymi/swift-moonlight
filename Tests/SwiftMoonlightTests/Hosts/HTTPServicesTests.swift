@@ -2,6 +2,28 @@ import Foundation
 import Testing
 @testable import SwiftMoonlight
 
+@Test(arguments: ["2001:db8::1", "[2001:db8::1]"])
+func buildsRequestURLsForIPv6Hosts(address: String) throws {
+    let builder = HostRequestBuilder()
+    let host = MoonlightHost(id: HostID(), name: "Host",
+                            endpoint: .init(address: address, port: 47989, securePort: 47984),
+                            kind: .apollo, pairingState: .unknown, capabilities: .default)
+    let pairing = try builder.makePairingURL(for: host, queryItems: [.init(name: "phrase", value: "getservercert")])
+    #expect(pairing.absoluteString == "http://[2001:db8::1]:47989/pair?phrase=getservercert")
+    let apps = try builder.makeAppListURL(for: host, uniqueID: nil)
+    #expect(apps.absoluteString == "https://[2001:db8::1]:47984/applist")
+    #expect(host.endpoint.address == address)
+}
+
+@Test(arguments: [-1, 0, 65536, Int.max])
+func rejectsInvalidHostRequestPorts(port: Int) throws {
+    let host = MoonlightHost(id: HostID(), name: "Host", endpoint: .init(address: "pc.local", port: port),
+                            kind: .sunshine, pairingState: .unknown, capabilities: .default)
+    #expect(throws: MoonlightError.self) {
+        try HostRequestBuilder().makeServerInfoURL(for: host, uniqueID: nil)
+    }
+}
+
 @Test
 func buildsServerInfoURLWithIdentityQuery() throws {
     let builder = HostRequestBuilder()

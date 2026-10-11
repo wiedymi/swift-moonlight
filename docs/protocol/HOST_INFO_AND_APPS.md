@@ -33,6 +33,7 @@ Refreshing a host must populate:
 - input/touch/controller capability hints where available
 
 Transport note:
+- HTTP URL construction accepts IPv4, DNS names, and IPv6 with or without brackets. Add brackets only in the URL; keep the stored endpoint address unchanged. Reject ports outside 1...65535 before passing them to Foundation.
 - the current Sunshine and Apollo GameStream `serverinfo` and `applist` endpoints are served on the advertised external HTTP port
 - `serverinfo` also reports a separate `HttpsPort`; when a secure port is already known, host refresh should try certificate-authenticated HTTPS `serverinfo` first, then fall back to plain HTTP for discovery and unpaired hosts
 - live `serverinfo` responses may report pairing state as `PairStatus` instead of `paired`; parsers must accept both

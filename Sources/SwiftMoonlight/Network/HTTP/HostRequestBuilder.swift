@@ -80,9 +80,12 @@ public struct HostRequestBuilder: Sendable {
         path: String,
         queryItems: [URLQueryItem]
     ) throws -> URL {
+        guard (1...65535).contains(port) else {
+            throw MoonlightError(.unsupportedOperation, message: "Host port must be between 1 and 65535")
+        }
         var components = URLComponents()
         components.scheme = scheme
-        components.host = address
+        components.host = address.contains(":") && !address.hasPrefix("[") ? "[\(address)]" : address
         components.port = port
         components.path = path
         components.queryItems = queryItems.isEmpty ? nil : queryItems
